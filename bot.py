@@ -22,8 +22,7 @@ TARGET_CHAT_ID = "-1002607891507"
 # ========================= ЛОГИКА =========================
 def extract_tg_id(input_str):
     s = str(input_str).strip()
-    # Игнорируем HTML/JS мусор
-    if not s or s.lower() == 'nan' or '<!DOCTYPE' in s or 'document.' in s or 'window' in s.lower():
+    if not s or s.lower() == 'nan' or '<!DOCTYPE' in s or 'document.' in s:
         return None
     if "#" in s: return s.split("#")[-1]
     if "t.me/" in s: return s.split("/")[-1].replace("@", "")
@@ -40,7 +39,6 @@ def login_5verst():
 async def main():
     logging.info("--- СИНХРОНИЗАЦИЯ И ЧИСТКА ---")
     
-    # Инициализируем чистую структуру
     new_cache = {TARGET_CHAT_ID: {}}
 
     def process_sheet(url, name, tg_col, v5_col):
@@ -48,45 +46,49 @@ async def main():
         try:
             res = requests.get(url, timeout=20)
             if '<!DOCTYPE' in res.text:
-                logging.error(f"ОШИБКА: Ссылка {name} всё еще ведет на HTML. Проверь публикацию CSV!")
+                logging.error(f"ОШИБКА: Ссылка {name} ведет на HTML (страницу логина).")
                 return
+            
             df = pd.read_csv(StringIO(res.text))
+            count = 0
             for _, row in df.iterrows():
                 try:
                     tg = extract_tg_id(row.iloc[tg_col])
-                    v5_val = row.iloc[v5_idx]
+                    v5_val = row.iloc[v5_col]
                     if tg and not pd.isna(v5_val):
-                        # Оставляем только цифры в ID 5 верст
                         v5_id = int(re.sub(r"\D", "", str(v5_val)))
                         new_cache[TARGET_CHAT_ID][str(tg)] = v5_id
+                        count += 1
                 except: continue
-            logging.info(f"Загружено из {name}: {len(df)} строк")
+            logging.info(f"Успешно обработано из {name}: {count} чел.")
         except Exception as e:
             logging.error(f"Ошибка {name}: {e}")
 
-    # Загружаем данные
+    # SHEET_BASE (Sheet1): Username в колонке 2, ID в колонке 3
     process_sheet(SHEET_BASE_URL, "БАЗА", 2, 3) 
+    # SHEET_FORM (Форма): Telegram в колонке 1, ID в колонке 2
     process_sheet(SHEET_FORM_URL, "ФОРМА", 1, 2)
 
-    # Сохраняем почищенный файл
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(new_cache, f, indent=2, ensure_ascii=False)
     
-    logging.info(f"Кэш очищен и обновлен. Итого реальных людей: {len(new_cache[TARGET_CHAT_ID])}")
+    total = len(new_cache[TARGET_CHAT_ID])
+    logging.info(f"Кэш обновлен. Итого в базе: {total} чел.")
 
-    # Обновление титулов
+    if total == 0:
+        logging.warning("База пуста! Проверь индексы колонок в коде.")
+        return
+
     headers = login_5verst()
     if not headers: return
 
     bot = Bot(token=TOKEN)
     for tg_id, v5_id in new_cache[TARGET_CHAT_ID].items():
         try:
-            # Запрос статистики
             r = requests.post("https://nrms.5verst.ru/api/v1/website/athlete/statById", 
                               json={"id": v5_id}, headers=headers, timeout=15)
             stats = r.json().get("result")
             
-            # Формируем титул
             m = stats.get("personal_best", {}).get("club_membership", {}) if stats else {}
             run = {"run500":"500","run250":"250","run100":"100","run50":"50","run25":"25","run10":"10"}.get(m.get("run"), "")
             vol = {"vol500":"500","vol250":"250","vol100":"100","vol50":"50","vol25":"25","vol10":"10"}.get(m.get("volunteer"), "")
@@ -97,7 +99,7 @@ async def main():
             await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=u_key, custom_title=title)
             logging.info(f"OK: {u_key} -> {title}")
         except Exception as e:
-            logging.warning(f"Ошибка ТГ для {tg_id}: {e}")
+            logging.warning(f"Skip {tg_id}: {e}")
         await asyncio.sleep(0.6)
 
 if __name__ == "__main__":
