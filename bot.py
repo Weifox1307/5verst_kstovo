@@ -9,33 +9,31 @@ import pandas as pd
 from telegram import Bot
 
 # ========================= КОНФИГ =========================
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 NRMS_USERNAME = os.getenv("NRMS_USERNAME")
 NRMS_PASSWORD = os.getenv("NRMS_PASSWORD")
-# Ссылка на CSV твоей таблицы с ответами формы
-SHEET_CSV_URL = os.getenv("https://docs.google.com/spreadsheets/d/e/2PACX-1vRGoVLS0q1-9QsOOxuiTzVtY5MgSJjN_hQpmV_1BTSPWk9Od280xyog2i14EcYeQYlG-qm8T5_mX6ub/pub?gid=1335132952&single=true&output=csv") 
+
+# Ссылки на CSV из секретов
+SHEET_BASE_URL = os.getenv("https://docs.google.com/spreadsheets/d/e/2PACX-1vRGoVLS0q1-9QsOOxuiTzVtY5MgSJjN_hQpmV_1BTSPWk9Od280xyog2i14EcYeQYlG-qm8T5_mX6ub/pub?gid=1335132952&single=true&output=csv")  # Твоя база на 366 чел
+SHEET_FORM_URL = os.getenv("https://docs.google.com/spreadsheets/d/e/2PACX-1vRGoVLS0q1-9QsOOxuiTzVtY5MgSJjN_hQpmV_1BTSPWk9Od280xyog2i14EcYeQYlG-qm8T5_mX6ub/pub?gid=1201534170&single=true&output=csv")  # Ответы из формы
 CACHE_FILE = "5verst_cache.json"
 
 API_LOGIN_URL = "https://nrms.5verst.ru/api/v1/auth/login"
 API_GET_STATS = "https://nrms.5verst.ru/api/v1/website/athlete/statById"
+TARGET_CHAT_ID = "-1002607891507"
 api_headers = {}
 
-# ========================= ЛОГИКА ИЗВЛЕЧЕНИЯ ID =========================
+# ========================= ЛОГИКА =========================
 def extract_tg_id(input_str):
-    """Достает ID или Username из ссылок любого типа"""
-    input_str = str(input_str).strip()
-    # Если это ссылка web.telegram.org/k/#12345678
-    if "#" in input_str:
-        return input_str.split("#")[-1]
-    # Если это ссылка t.me/12345678 или t.me/username
-    if "t.me/" in input_str:
-        return input_str.split("/")[-1]
-    # Если это просто ID или username
-    return input_str.replace("@", "")
+    """Очистка ссылок и извлечение ID/Username"""
+    s = str(input_str).strip()
+    if not s or s.lower() == 'nan': return None
+    if "#" in s: return s.split("#")[-1]
+    if "t.me/" in s: return s.split("/")[-1].replace("@", "")
+    return s.replace("@", "")
 
-# ========================= API 5ВЁРСТ =========================
 def login_5verst():
     global api_headers
     try:
@@ -50,7 +48,6 @@ def login_5verst():
 
 def get_stats(aid):
     try:
-        # Убираем букву А, если она есть, для запроса к API
         clean_id = int(re.sub(r"\D", "", str(aid)))
         r = requests.post(API_GET_STATS, json={"id": clean_id}, headers=api_headers, timeout=15)
         return r.json().get("result")
@@ -64,62 +61,67 @@ def make_title(stats):
     badges = [b for b in [run, vol] if b]
     return f"Клуб {'|'.join(badges)}" if badges else "Новичок"
 
-# ========================= ОСНОВНОЙ ПРОЦЕСС =========================
 async def main():
-    logging.info("Запуск обновления...")
+    logging.info("--- Запуск процесса синхронизации ---")
     
-    # 1. Загружаем старый кэш
+    # 1. Загружаем текущий локальный кэш
     if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, "r") as f:
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
             cache = json.load(f)
     else:
-        cache = {}
+        cache = {TARGET_CHAT_ID: {}}
 
-    # 2. Качаем данные из таблицы
-    try:
-        res = requests.get(SHEET_CSV_URL)
-        res.encoding = 'utf-8'
-        df = pd.read_csv(StringIO(res.text))
-        
-        # Предположим: 1-я колонка время, 2-я TG, 3-я ID 5в
-        # Лучше обращаться по индексам, если названия колонок длинные
-        for _, row in df.iterrows():
-            raw_tg = row.iloc[1] 
-            raw_5v = row.iloc[2]
-            
-            tg_val = extract_tg_id(raw_tg)
-            v5_val = int(re.sub(r"\D", "", str(raw_5v)))
-            
-            # Добавляем в основной чат (ID твоего чата из логов)
-            chat_id = "-1002607891507"
-            if chat_id not in cache: cache[chat_id] = {}
-            cache[chat_id][str(tg_val)] = v5_val
-    except Exception as e:
-        logging.error(f"Ошибка чтения таблицы: {e}")
+    # Универсальная функция загрузки из Google Таблиц
+    def sync_sheet(url, tg_idx, v5_idx):
+        if not url: return
+        try:
+            res = requests.get(url)
+            res.encoding = 'utf-8'
+            df = pd.read_csv(StringIO(res.text))
+            for _, row in df.iterrows():
+                try:
+                    tg = extract_tg_id(row.iloc[tg_idx])
+                    v5_val = row.iloc[v5_idx]
+                    if not tg or pd.isna(v5_val): continue
+                    v5_id = int(re.sub(r"\D", "", str(v5_val)))
+                    cache[TARGET_CHAT_ID][str(tg)] = v5_id
+                except: continue
+        except Exception as e:
+            logging.error(f"Ошибка при чтении листа: {e}")
 
-    # 3. Сохраняем обновленный кэш
-    with open(CACHE_FILE, "w") as f:
-        json.dump(cache, f, indent=2)
+    # 2. Обновляем кэш из Google Таблиц
+    # Для Sheet1 (366 чел): TG обычно в 1-й колонке (0), ID 5в в 3-й (2)
+    logging.info("Синхронизация с базой Sheet1...")
+    sync_sheet(SHEET_BASE_URL, 0, 2) 
+    
+    # Для Формы: Время(0), TG(1), ID 5в(2)
+    logging.info("Синхронизация с ответами формы...")
+    sync_sheet(SHEET_FORM_URL, 1, 2)
 
-    # 4. Обновляем титулы в ТГ
+    # 3. Сохраняем результат в файл (чтобы GitHub его запомнил)
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, indent=2, ensure_ascii=False)
+
+    # 4. Работа с Telegram
     if login_5verst():
         bot = Bot(token=TOKEN)
-        for chat_id, users in cache.items():
-            for tg_id, v5_id in users.items():
-                stats = get_stats(v5_id)
-                title = make_title(stats)
-                try:
-                    # Если tg_id это цифры - используем как int, если буквы - как username
-                    user_key = int(tg_id) if tg_id.isdigit() else f"@{tg_id}"
-                    await bot.set_chat_administrator_custom_title(
-                        chat_id=int(chat_id), 
-                        user_id=user_key, 
-                        custom_title=title
-                    )
-                    logging.info(f"OK: {user_key} -> {title}")
-                except Exception as e:
-                    logging.warning(f"Skip {tg_id}: {e}")
-                await asyncio.sleep(0.5)
+        users = cache.get(TARGET_CHAT_ID, {})
+        logging.info(f"Итого в базе: {len(users)} чел. Начинаю обновление титулов...")
+        
+        for tg_id, v5_id in users.items():
+            stats = get_stats(v5_id)
+            title = make_title(stats)
+            try:
+                user_key = int(tg_id) if tg_id.isdigit() else f"@{tg_id}"
+                await bot.set_chat_administrator_custom_title(
+                    chat_id=int(TARGET_CHAT_ID), 
+                    user_id=user_key, 
+                    custom_title=title
+                )
+                logging.info(f"Успех: {user_key} -> {title}")
+            except Exception as e:
+                logging.warning(f"Пропуск {tg_id}: {e}")
+            await asyncio.sleep(0.6) # Защита от спам-фильтра
 
 if __name__ == "__main__":
     asyncio.run(main())
