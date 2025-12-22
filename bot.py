@@ -15,7 +15,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 NRMS_USERNAME = os.getenv("NRMS_USERNAME")
 NRMS_PASSWORD = os.getenv("NRMS_PASSWORD")
 # Ссылка на CSV твоей таблицы с ответами формы
-SHEET_CSV_URL = os.getenv("SHEET_CSV_URL") 
+SHEET_CSV_URL = os.getenv("https://docs.google.com/spreadsheets/d/e/2PACX-1vRGoVLS0q1-9QsOOxuiTzVtY5MgSJjN_hQpmV_1BTSPWk9Od280xyog2i14EcYeQYlG-qm8T5_mX6ub/pub?gid=1335132952&single=true&output=csv") 
 CACHE_FILE = "5verst_cache.json"
 
 API_LOGIN_URL = "https://nrms.5verst.ru/api/v1/auth/login"
