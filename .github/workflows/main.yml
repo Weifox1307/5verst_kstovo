@@ -2,14 +2,12 @@ name: Update 5Verst Titles
 
 on:
   schedule:
-    # 11:00 UTC = 14:00 МСК. Запуск каждую субботу (6 день недели)
-    - cron: '0 11 * * 6'
-  workflow_dispatch: # Чтобы можно было запустить вручную для теста
+    - cron: '0 11 * * 6' # Каждую субботу в 14:00 МСК
+  workflow_dispatch:
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    # Даем права на запись, чтобы GitHub Actions мог обновлять json файл в репозитории
     permissions:
       contents: write
 
@@ -30,13 +28,14 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           NRMS_USERNAME: ${{ secrets.NRMS_USERNAME }}
           NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
-          SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
+          SHEET_BASE_URL: ${{ secrets.SHEET_BASE_URL }}
+          SHEET_FORM_URL: ${{ secrets.SHEET_FORM_URL }}
         run: python bot.py
 
-      - name: Commit and Push changes
+      - name: Save Cache to Repo
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
           git add 5verst_cache.json
-          git commit -m "Auto-update cache from Google Form" || echo "No changes to commit"
+          git commit -m "Auto-update cache from Google Sheets" || echo "No changes"
           git push
