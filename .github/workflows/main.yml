@@ -1,0 +1,29 @@
+name: Update 5Verst Titles
+
+on:
+  schedule:
+    # 11:00 UTC = 14:00 МСК. Запуск каждую субботу (6 день недели)
+    - cron: '0 11 * * 6'
+  workflow_dispatch: # Чтобы можно было запустить вручную для теста
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install python-telegram-bot requests pytz
+
+      - name: Run Title Updater
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          NRMS_USERNAME: ${{ secrets.NRMS_USERNAME }}
+          NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
+        run: python bot.py
