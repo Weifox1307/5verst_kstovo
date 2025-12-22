@@ -21,10 +21,8 @@ TARGET_CHAT_ID = "-1002607891507"
 
 # ========================= ЛОГИКА =========================
 def extract_id(input_str):
-    """Оставляет только цифры из ID (убирает А, # и прочее)"""
     s = str(input_str).strip()
     if not s or s.lower() == 'nan': return None
-    # Оставляем только цифры
     digits = re.sub(r"\D", "", s)
     return digits if digits else None
 
@@ -39,30 +37,25 @@ def login_5verst():
 async def main():
     logging.info("--- СТАРТ СИНХРОНИЗАЦИИ ---")
     
-    # 1. Загружаем старый кэш
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             cache = json.load(f)
     else:
         cache = {TARGET_CHAT_ID: {}}
 
-    # 2. Скачиваем БАЗУ (Sheet1) - чтобы знать, кто у нас есть в чате
-    # Колонки: id(0), name(1), username(2)
+    # 1. Загрузка Базы (Sheet1)
     valid_chat_members = set()
     try:
         res_base = requests.get(SHEET_BASE_URL, timeout=20)
         if '<!DOCTYPE' not in res_base.text:
             df_base = pd.read_csv(StringIO(res_base.text))
-            # Собираем все ID Telegram из первой колонки
             for _, row in df_base.iterrows():
                 tg_id = extract_id(row.iloc[0])
                 if tg_id: valid_chat_members.add(str(tg_id))
-            logging.info(f"Загружено {len(valid_chat_members)} ID участников из Sheet1")
     except Exception as e:
-        logging.error(f"Ошибка базы Sheet1: {e}")
+        logging.error(f"Ошибка Sheet1: {e}")
 
-    # 3. Скачиваем ФОРМУ - сопоставляем данные
-    # Колонки: Время(0), Telegram ID(1), ID 5 верст(2)
+    # 2. Загрузка Формы
     try:
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
         if '<!DOCTYPE' not in res_form.text:
@@ -71,52 +64,58 @@ async def main():
                 try:
                     form_tg_id = extract_id(row.iloc[1])
                     form_v5_id = extract_id(row.iloc[2])
-                    
-                    if form_tg_id and form_v5_id:
-                        # Если этот ID есть в нашей базе (Sheet1)
-                        if form_tg_id in valid_chat_members:
-                            cache[TARGET_CHAT_ID][str(form_tg_id)] = int(form_v5_id)
-                            logging.info(f"Матч: TG {form_tg_id} привязан к 5в {form_v5_id}")
+                    if form_tg_id and form_v5_id and form_tg_id in valid_chat_members:
+                        cache[TARGET_CHAT_ID][str(form_tg_id)] = int(form_v5_id)
                 except: continue
     except Exception as e:
         logging.error(f"Ошибка формы: {e}")
 
-    # Сохраняем кэш
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2, ensure_ascii=False)
 
-    # 4. ОБНОВЛЕНИЕ ТИТУЛОВ В TELEGRAM
+    # 3. Работа с Telegram
     headers = login_5verst()
-    if not headers: 
-        logging.error("Не удалось войти в систему 5 вёрст")
-        return
+    if not headers: return
 
     bot = Bot(token=TOKEN)
     for tg_id, v5_id in cache[TARGET_CHAT_ID].items():
         try:
-            # Запрос статистики
+            # Получаем статы 5в
             r = requests.post("https://nrms.5verst.ru/api/v1/website/athlete/statById", 
                               json={"id": v5_id}, headers=headers, timeout=15)
             stats = r.json().get("result")
             if not stats: continue
 
-            # Логика титула
             m = stats.get("personal_best", {}).get("club_membership", {})
             run = {"run500":"500","run250":"250","run100":"100","run50":"50","run25":"25","run10":"10"}.get(m.get("run"), "")
             vol = {"vol500":"500","vol250":"250","vol100":"100","vol50":"50","vol25":"25","vol10":"10"}.get(m.get("volunteer"), "")
             badges = [b for b in [run, vol] if b]
             title = f"Клуб {'|'.join(badges)}" if badges else "Новичок"
 
-            # Установка титула по числовому ID
+            uid = int(tg_id)
+
+            # --- ШАГ: НАЗНАЧАЕМ АДМИНОМ (без прав) ---
+            try:
+                await bot.promote_chat_member(
+                    chat_id=int(TARGET_CHAT_ID),
+                    user_id=uid,
+                    can_manage_chat=True, # Обязательно True для титула
+                    can_invite_users=True # Минимальное безобидное право
+                )
+            except Exception as e:
+                logging.info(f"Заметка для {uid}: Пользователь уже админ или нельзя повысить ({e})")
+
+            # --- ШАГ: СТАВИМ ТИТУЛ ---
             await bot.set_chat_administrator_custom_title(
                 chat_id=int(TARGET_CHAT_ID), 
-                user_id=int(tg_id), 
+                user_id=uid, 
                 custom_title=title
             )
-            logging.info(f"Титул обновлен: {tg_id} -> {title}")
+            logging.info(f"Успешно: {uid} -> {title}")
+
         except Exception as e:
-            logging.warning(f"Не удалось обновить {tg_id}: {e}")
-        await asyncio.sleep(0.6)
+            logging.warning(f"Ошибка для {tg_id}: {e}")
+        await asyncio.sleep(0.8)
 
 if __name__ == "__main__":
     asyncio.run(main())
