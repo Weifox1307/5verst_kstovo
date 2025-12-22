@@ -37,8 +37,7 @@ def login_5verst():
     except: return None
 
 async def main():
-    logging.info("--- СИНХРОНИЗАЦИЯ И ЧИСТКА ---")
-    
+    logging.info("--- СИНХРОНИЗАЦИЯ ---")
     new_cache = {TARGET_CHAT_ID: {}}
 
     def process_sheet(url, name, tg_col, v5_col):
@@ -46,7 +45,7 @@ async def main():
         try:
             res = requests.get(url, timeout=20)
             if '<!DOCTYPE' in res.text:
-                logging.error(f"ОШИБКА: Ссылка {name} ведет на HTML (страницу логина).")
+                logging.error(f"ОШИБКА: Ссылка {name} ведет на страницу логина (HTML). Проверь публикацию CSV!")
                 return
             
             df = pd.read_csv(StringIO(res.text))
@@ -56,6 +55,7 @@ async def main():
                     tg = extract_tg_id(row.iloc[tg_col])
                     v5_val = row.iloc[v5_col]
                     if tg and not pd.isna(v5_val):
+                        # Извлекаем только цифры (ID 5 верст)
                         v5_id = int(re.sub(r"\D", "", str(v5_val)))
                         new_cache[TARGET_CHAT_ID][str(tg)] = v5_id
                         count += 1
@@ -64,23 +64,19 @@ async def main():
         except Exception as e:
             logging.error(f"Ошибка {name}: {e}")
 
-    # SHEET_BASE (Sheet1): Username в колонке 2, ID в колонке 3
+    # БАЗА (365 чел): Username (2), ID (3)
     process_sheet(SHEET_BASE_URL, "БАЗА", 2, 3) 
-    # SHEET_FORM (Форма): Telegram в колонке 1, ID в колонке 2
+    # ФОРМА: Telegram (1), ID (2)
     process_sheet(SHEET_FORM_URL, "ФОРМА", 1, 2)
 
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(new_cache, f, indent=2, ensure_ascii=False)
     
     total = len(new_cache[TARGET_CHAT_ID])
-    logging.info(f"Кэш обновлен. Итого в базе: {total} чел.")
-
-    if total == 0:
-        logging.warning("База пуста! Проверь индексы колонок в коде.")
-        return
+    logging.info(f"Итого в кэше: {total} чел.")
 
     headers = login_5verst()
-    if not headers: return
+    if not headers or total == 0: return
 
     bot = Bot(token=TOKEN)
     for tg_id, v5_id in new_cache[TARGET_CHAT_ID].items():
