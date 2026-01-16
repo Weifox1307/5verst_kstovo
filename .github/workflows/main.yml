@@ -30,7 +30,7 @@ jobs:
           NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
           SHEET_BASE_URL: ${{ secrets.SHEET_BASE_URL }}
           SHEET_FORM_URL: ${{ secrets.SHEET_FORM_URL }}
-        run: python bot.py
+        run: python bot.py --titles  # ДОБАВИЛИ ФЛАГ
 
       - name: Save Cache to Repo
         run: |
