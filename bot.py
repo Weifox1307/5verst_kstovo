@@ -108,8 +108,7 @@ async def check_birthdays(monthly_list=False):
     now = datetime.now(tz)
     congrats_list = []
     month_list = []
-    today_mentions = []          # @username или просто имя
-    today_display_names = []     # для кнопок — красивое имя без @
+    today_mentions = []
 
     try:
         res = requests.get(SHEET_BIRTHDAYS_URL)
@@ -134,29 +133,23 @@ async def check_birthdays(monthly_list=False):
                     month_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
             elif d_t == now.day and m_t == now.month:
                 username = str(row.get('username', '')).strip()
-                clean_un = username.replace('@', '').strip()
+                clean_un = username.replace('@','')
+
+                mention = f"@{clean_un}" if clean_un and clean_un.lower() not in ["nan", "none", ""] else html.escape(name)
 
                 if clean_un and clean_un.lower() not in ["nan", "none", ""]:
-                    mention = f"@{clean_un}"
-                    display_name = clean_un
+                    today_mentions.append(f"@{clean_un}")
                 else:
-                    mention = html.escape(name)
-                    display_name = name
-
-                today_mentions.append(mention)
-                today_display_names.append(display_name)
+                    today_mentions.append(name)
 
                 age_text = ""
                 if len(parts) == 3:
                     try:
                         year_t = int(float(parts[2]))
-                        if 1900 < year_t < now.year:
-                            age_text = f" ({now.year - year_t} лет)"
-                    except:
-                        pass
+                        if 1900 < year_t < now.year: age_text = f" ({now.year - year_t} лет)"
+                    except: pass
                 congrats_list.append(f"<b>{mention}</b>{age_text}")
-        except:
-            continue
+        except: continue
 
     bot = Bot(token=TOKEN)
     async with bot:
@@ -169,27 +162,28 @@ async def check_birthdays(monthly_list=False):
                 parse_mode=ParseMode.HTML,
                 message_thread_id=int(THREAD_ID) if THREAD_ID else None
             )
-
         elif not monthly_list and congrats_list:
             msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats_list) + "\n\nПоздравляем! 🎉"
 
-            # Создаём кнопки для каждого именинника
-            buttons = []
-            for mention, display_name in zip(today_mentions, today_display_names):
-                # Текст, который вставится в поле ввода после нажатия
-                # (Telegram добавит @имя_бота в начало — это неизбежно)
-                congrats_text = f"{mention}, с днём рождения! 🎉 Желаю лёгких ног, крутых рекордов и всегда отличного настроения! 🏃‍♂️🔥"
+            all_nicks = ", ".join(today_mentions)
+            congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
 
-                btn = InlineKeyboardButton(
-                    text=f"Поздравить {display_name}",
-                    switch_inline_query_current_chat=congrats_text
-                )
-                buttons.append(btn)
+            # Кнопка 1: Копировать в буфер обмена (надёжно на iOS и везде)
+            copy_button = InlineKeyboardButton(
+                text="Скопировать поздравление 📋",
+                copy_text=congrats_text
+            )
 
-            # Разбиваем кнопки по рядам (по 2–3 штуки в ряд)
-            MAX_PER_ROW = 3
-            keyboard_rows = [buttons[i:i + MAX_PER_ROW] for i in range(0, len(buttons), MAX_PER_ROW)]
-            keyboard = InlineKeyboardMarkup(keyboard_rows)
+            # Кнопка 2: Вставить прямо в поле ввода (удобно на Android / ПК)
+            insert_button = InlineKeyboardButton(
+                text="Вставить в чат 🪄",
+                switch_inline_query_current_chat=congrats_text
+            )
+
+            # Кнопки в одном ряду
+            keyboard = InlineKeyboardMarkup([
+                [copy_button, insert_button]
+            ])
 
             await bot.send_message(
                 chat_id=int(TARGET_CHAT_ID),
@@ -199,7 +193,7 @@ async def check_birthdays(monthly_list=False):
                 message_thread_id=int(THREAD_ID) if THREAD_ID else None
             )
 
-# ... (остальной код погоды и main без изменений) ...
+# ========================= ПОГОДА =========================
 async def send_weather():
     logger.info("--- ЗАПРОС ПОГОДЫ ---")
     city = "Kstovo"
@@ -213,6 +207,7 @@ async def send_weather():
     except Exception as e:
         logger.error(f"Ошибка погоды: {e}")
 
+# ========================= MAIN =========================
 async def main():
     if len(sys.argv) < 2: return
     mode = sys.argv[1]
