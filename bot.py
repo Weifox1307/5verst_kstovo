@@ -10,8 +10,7 @@ import sys
 from io import StringIO
 from datetime import datetime
 import pandas as pd
-# Импортируем именно те классы, которые нужны для кнопок копирования
-from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton, CopyTextButton
+from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 
 # ========================= КОНФИГ =========================
@@ -165,33 +164,27 @@ async def check_birthdays(monthly_list=False):
             msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(month_list))
             await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=int(THREAD_ID) if THREAD_ID else None)
         elif not monthly_list and congrats_list:
-            msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats_list) + "\n\nПоздравляем! 🎉"
-            
             all_nicks = ", ".join(today_mentions)
             congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
             
-            # РЕШЕНИЕ: Кнопки в столбик (каждая в своем списке [])
-            btn_copy = InlineKeyboardButton(
-                text="🎉 Поздравить 🥳 (для iOS)", 
-                copy_text=CopyTextButton(text=congrats_text)
-            )
-            
-            btn_insert = InlineKeyboardButton(
-                text="🎉 Поздравить 🥳 (для Android|ПК)", 
-                switch_inline_query_current_chat=congrats_text
+            msg = (
+                f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n"
+                f"{'\n'.join(congrats_list)}\n\n"
+                f"Поздравляем! 🎉\n\n"
+                f"💡 <i>Нажмите кнопку ниже, чтобы автоматически вставить текст поздравления в поле ввода!</i>"
             )
 
-            # Каждая кнопка на новой строке
-            keyboard = InlineKeyboardMarkup([
-                [btn_copy],
-                [btn_insert]
-            ])
+            # Универсальная кнопка теперь работает везде
+            btn_universal = InlineKeyboardButton(
+                text="🥳 Поздравить 🎉", 
+                switch_inline_query_current_chat=congrats_text
+            )
 
             await bot.send_message(
                 chat_id=int(TARGET_CHAT_ID), 
                 text=msg, 
                 parse_mode=ParseMode.HTML, 
-                reply_markup=keyboard,
+                reply_markup=InlineKeyboardMarkup([[btn_universal]]),
                 message_thread_id=int(THREAD_ID) if THREAD_ID else None
             )
 
