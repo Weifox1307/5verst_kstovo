@@ -17,20 +17,18 @@ from telegram.constants import ParseMode
 # ========================= КОНФИГ =========================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # Убираем -100 из ID для ссылок типа tg://, если это супергруппа
 RAW_CHAT_ID = os.getenv("TARGET_CHAT_ID", "-1002607891507")
 TARGET_CHAT_ID = RAW_CHAT_ID
 CLEAN_CHAT_ID = RAW_CHAT_ID.replace("-100", "")
-
 TIMEZONE = "Europe/Moscow"
 NRMS_USERNAME = os.getenv("NRMS_USERNAME")
 NRMS_PASSWORD = os.getenv("NRMS_PASSWORD")
 SHEET_BASE_URL = os.getenv("SHEET_BASE_URL")
 SHEET_FORM_URL = os.getenv("SHEET_FORM_URL")
 CACHE_FILE = "5verst_cache.json"
-SHEET_BIRTHDAYS_URL = os.getenv("SHEET_BIRTHDAYS_URL") 
+SHEET_BIRTHDAYS_URL = os.getenv("SHEET_BIRTHDAYS_URL")
 THREAD_ID = os.getenv("THREAD_ID")
 
 # ========================= ВСПОМОГАТЕЛЬНОЕ =========================
@@ -42,7 +40,7 @@ def extract_id(input_str):
 
 def login_5verst():
     try:
-        r = requests.post("https://nrms.5verst.ru/api/v1/auth/login", 
+        r = requests.post("https://nrms.5verst.ru/api/v1/auth/login",
                           json={"username": NRMS_USERNAME, "password": NRMS_PASSWORD}, timeout=15)
         token = r.json().get("result", {}).get("token")
         return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"} if token else None
@@ -56,7 +54,6 @@ async def update_titles():
             cache = json.load(f)
     else:
         cache = {TARGET_CHAT_ID: {}}
-
     valid_chat_members = set()
     try:
         res_base = requests.get(SHEET_BASE_URL, timeout=20)
@@ -66,7 +63,6 @@ async def update_titles():
             if tg_id: valid_chat_members.add(str(tg_id))
     except Exception as e:
         logger.error(f"Ошибка Sheet1: {e}")
-
     try:
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
         df_form = pd.read_csv(StringIO(res_form.text))
@@ -78,32 +74,26 @@ async def update_titles():
                 cache[TARGET_CHAT_ID][str(f_tg_id)] = int(f_v5_id)
     except Exception as e:
         logger.error(f"Ошибка формы: {e}")
-
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2, ensure_ascii=False)
-
     headers = login_5verst()
     if not headers: return
-
     bot = Bot(token=TOKEN)
     for tg_id, v5_id in cache.get(TARGET_CHAT_ID, {}).items():
         try:
-            r = requests.post("https://nrms.5verst.ru/api/v1/website/athlete/statById", 
+            r = requests.post("https://nrms.5verst.ru/api/v1/website/athlete/statById",
                               json={"id": v5_id}, headers=headers, timeout=15)
             stats = r.json().get("result")
             if not stats: continue
-
             m = stats.get("personal_best", {}).get("club_membership", {})
             run = {"run500":"500","run250":"250","run100":"100","run50":"50","run25":"25","run10":"10"}.get(m.get("run"), "")
             vol = {"vol500":"500","vol250":"250","vol100":"100","vol50":"50","vol25":"25","vol10":"10"}.get(m.get("volunteer"), "")
             badges = [b for b in [run, vol] if b]
             title = f"Клуб {'|'.join(badges)}" if badges else "Новичок"
-
             uid = int(tg_id)
             try:
                 await bot.promote_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=uid, can_manage_chat=True, can_invite_users=True)
             except: pass
-
             await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
             logger.info(f"Успешно: {uid} -> {title}")
             await asyncio.sleep(0.8)
@@ -114,83 +104,97 @@ async def update_titles():
 async def check_birthdays(monthly_list=False):
     logger.info(f"--- СТАРТ ПРОВЕРКИ ДР ---")
     if not SHEET_BIRTHDAYS_URL: return
-
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
     congrats_list = []
     month_list = []
-    today_mentions = []
+    today_mentions = []          # @username или просто имя
+    today_display_names = []     # для кнопок — красивое имя без @
 
     try:
         res = requests.get(SHEET_BIRTHDAYS_URL)
         res.encoding = 'utf-8'
         df = pd.read_csv(StringIO(res.text)).fillna("")
     except Exception as e:
-        logger.error(f"Ошибка таблицы: {e}"); return
+        logger.error(f"Ошибка таблицы: {e}")
+        return
 
     for _, row in df.iterrows():
         try:
             name = str(row['name']).strip()
             bd_val = str(row['birthday']).strip()
             if not bd_val or bd_val.lower() == "nan": continue
-
             parts = bd_val.replace('/', '.').replace('-', '.').split('.')
             if len(parts) < 2: continue
-            
+
             d_t, m_t = int(float(parts[0])), int(float(parts[1]))
-            
+
             if monthly_list:
                 if m_t == now.month:
                     month_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
             elif d_t == now.day and m_t == now.month:
                 username = str(row.get('username', '')).strip()
-                clean_un = username.replace('@','')
-                
-                mention = f"@{clean_un}" if clean_un and clean_un.lower() not in ["nan", "none", ""] else html.escape(name)
-                
+                clean_un = username.replace('@', '').strip()
+
                 if clean_un and clean_un.lower() not in ["nan", "none", ""]:
-                    today_mentions.append(f"@{clean_un}")
+                    mention = f"@{clean_un}"
+                    display_name = clean_un
                 else:
-                    today_mentions.append(name)
+                    mention = html.escape(name)
+                    display_name = name
+
+                today_mentions.append(mention)
+                today_display_names.append(display_name)
 
                 age_text = ""
                 if len(parts) == 3:
                     try:
                         year_t = int(float(parts[2]))
-                        if 1900 < year_t < now.year: age_text = f" ({now.year - year_t} лет)"
-                    except: pass
+                        if 1900 < year_t < now.year:
+                            age_text = f" ({now.year - year_t} лет)"
+                    except:
+                        pass
                 congrats_list.append(f"<b>{mention}</b>{age_text}")
-        except: continue
+        except:
+            continue
 
     bot = Bot(token=TOKEN)
     async with bot:
         if monthly_list and month_list:
             months = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"]
             msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(month_list))
-            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=int(THREAD_ID) if THREAD_ID else None)
+            await bot.send_message(
+                chat_id=int(TARGET_CHAT_ID),
+                text=msg,
+                parse_mode=ParseMode.HTML,
+                message_thread_id=int(THREAD_ID) if THREAD_ID else None
+            )
+
         elif not monthly_list and congrats_list:
             msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats_list) + "\n\nПоздравляем! 🎉"
-            
-            all_nicks = ", ".join(today_mentions)
-            congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
-            encoded_text = urllib.parse.quote(congrats_text)
-            
-            # ВАЖНО: Используем прямую ссылку на мессенджер с ID чата
-            # Формат: tg://msg?text=Текст&pd=ID_ЧАТА
-            # Но так как PD работает не везде, используем универсальный t.me/confirm
-            final_url = f"https://t.me/share/url?url={encoded_text}" 
-            
-            # Примечание: Telegram НЕ позволяет ссылке самой выбирать чат без подтверждения.
-            # Если мы укажем прямую ссылку на группу tg://resolve?domain=groupname, текст пропадет.
-            
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Поздравить! 🥳", url=final_url)]
-            ])
+
+            # Создаём кнопки для каждого именинника
+            buttons = []
+            for mention, display_name in zip(today_mentions, today_display_names):
+                # Текст, который вставится в поле ввода после нажатия
+                # (Telegram добавит @имя_бота в начало — это неизбежно)
+                congrats_text = f"{mention}, с днём рождения! 🎉 Желаю лёгких ног, крутых рекордов и всегда отличного настроения! 🏃‍♂️🔥"
+
+                btn = InlineKeyboardButton(
+                    text=f"Поздравить {display_name}",
+                    switch_inline_query_current_chat=congrats_text
+                )
+                buttons.append(btn)
+
+            # Разбиваем кнопки по рядам (по 2–3 штуки в ряд)
+            MAX_PER_ROW = 3
+            keyboard_rows = [buttons[i:i + MAX_PER_ROW] for i in range(0, len(buttons), MAX_PER_ROW)]
+            keyboard = InlineKeyboardMarkup(keyboard_rows)
 
             await bot.send_message(
-                chat_id=int(TARGET_CHAT_ID), 
-                text=msg, 
-                parse_mode=ParseMode.HTML, 
+                chat_id=int(TARGET_CHAT_ID),
+                text=msg,
+                parse_mode=ParseMode.HTML,
                 reply_markup=keyboard,
                 message_thread_id=int(THREAD_ID) if THREAD_ID else None
             )
@@ -198,7 +202,7 @@ async def check_birthdays(monthly_list=False):
 # ... (остальной код погоды и main без изменений) ...
 async def send_weather():
     logger.info("--- ЗАПРОС ПОГОДЫ ---")
-    city = "Kstovo" 
+    city = "Kstovo"
     try:
         r = requests.get(f"https://wttr.in/{city}?format=%c+%t,+%C,+ощущается+как+%f&lang=ru")
         weather_text = r.text.strip()
