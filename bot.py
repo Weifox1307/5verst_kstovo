@@ -174,7 +174,7 @@ async def check_birthdays(monthly_list=False):
                 f"{congrats_names_block}\n\n"
                 f"Поздравляем! 🎉\n\n"
                 f"📝 <b>Инструкция для поздравления:</b>\n"
-                f"1. Нажмите на кнопку <b>«Скопировать»</b>\n"
+                f"1. Нажмите на кнопку <b>«🎉 Поздравить 🥳»</b>\n"
                 f"2. Удерживайте поле ввода и выберите <b>«Вставить»</b>\n\n"
                 f"<code>{congrats_text}</code>"
             )
