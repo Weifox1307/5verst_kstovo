@@ -9,6 +9,7 @@ import pytz
 import sys
 from io import StringIO
 from datetime import datetime
+import urllib.parse
 import pandas as pd
 from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
@@ -18,15 +19,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TARGET_CHAT_ID = os.getenv("TARGET_CHAT_ID", "-1002607891507")
-TIMEZONE = "Europe/Moscow"
+# Убираем -100 из ID для ссылок типа tg://, если это супергруппа
+RAW_CHAT_ID = os.getenv("TARGET_CHAT_ID", "-1002607891507")
+TARGET_CHAT_ID = RAW_CHAT_ID
+CLEAN_CHAT_ID = RAW_CHAT_ID.replace("-100", "")
 
+TIMEZONE = "Europe/Moscow"
 NRMS_USERNAME = os.getenv("NRMS_USERNAME")
 NRMS_PASSWORD = os.getenv("NRMS_PASSWORD")
 SHEET_BASE_URL = os.getenv("SHEET_BASE_URL")
 SHEET_FORM_URL = os.getenv("SHEET_FORM_URL")
 CACHE_FILE = "5verst_cache.json"
-
 SHEET_BIRTHDAYS_URL = os.getenv("SHEET_BIRTHDAYS_URL") 
 THREAD_ID = os.getenv("THREAD_ID")
 
@@ -109,20 +112,21 @@ async def update_titles():
 
 # ========================= ЛОГИКА ДНЕЙ РОЖДЕНИЙ =========================
 async def check_birthdays(monthly_list=False):
-    logger.info(f"--- СТАРТ ПРОВЕРКИ ДР (Месяц: {monthly_list}) ---")
+    logger.info(f"--- СТАРТ ПРОВЕРКИ ДР ---")
     if not SHEET_BIRTHDAYS_URL: return
 
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
     congrats_list = []
     month_list = []
+    today_mentions = []
 
     try:
         res = requests.get(SHEET_BIRTHDAYS_URL)
         res.encoding = 'utf-8'
         df = pd.read_csv(StringIO(res.text)).fillna("")
     except Exception as e:
-        logger.error(f"Ошибка таблицы ДР: {e}"); return
+        logger.error(f"Ошибка таблицы: {e}"); return
 
     for _, row in df.iterrows():
         try:
@@ -140,8 +144,15 @@ async def check_birthdays(monthly_list=False):
                     month_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
             elif d_t == now.day and m_t == now.month:
                 username = str(row.get('username', '')).strip()
-                mention = f"@{username.replace('@','')}" if username and username.lower() not in ["nan", "none", ""] else html.escape(name)
+                clean_un = username.replace('@','')
                 
+                mention = f"@{clean_un}" if clean_un and clean_un.lower() not in ["nan", "none", ""] else html.escape(name)
+                
+                if clean_un and clean_un.lower() not in ["nan", "none", ""]:
+                    today_mentions.append(f"@{clean_un}")
+                else:
+                    today_mentions.append(name)
+
                 age_text = ""
                 if len(parts) == 3:
                     try:
@@ -155,15 +166,25 @@ async def check_birthdays(monthly_list=False):
     async with bot:
         if monthly_list and month_list:
             months = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"]
-            month_name = months[now.month-1]
-            msg = f"🎂 <b>Именинники в {month_name}:</b>\n\n" + "\n".join(sorted(month_list))
+            msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(month_list))
             await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=int(THREAD_ID) if THREAD_ID else None)
         elif not monthly_list and congrats_list:
-            msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats_list) + "\n\nПоздравляем! 🎉🏃‍♂️"
+            msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats_list) + "\n\nПоздравляем! 🎉"
             
-            share_text = requests.utils.quote("С днём рождения! Желаю легких ног и крутых рекордов! 🎉🏃‍♂️")
+            all_nicks = ", ".join(today_mentions)
+            congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
+            encoded_text = urllib.parse.quote(congrats_text)
+            
+            # ВАЖНО: Используем прямую ссылку на мессенджер с ID чата
+            # Формат: tg://msg?text=Текст&pd=ID_ЧАТА
+            # Но так как PD работает не везде, используем универсальный t.me/confirm
+            final_url = f"https://t.me/share/url?url={encoded_text}" 
+            
+            # Примечание: Telegram НЕ позволяет ссылке самой выбирать чат без подтверждения.
+            # Если мы укажем прямую ссылку на группу tg://resolve?domain=groupname, текст пропадет.
+            
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Поздравить! 🥳", url=f"https://t.me/share/url?url={share_text}")]
+                [InlineKeyboardButton("Поздравить! 🥳", url=final_url)]
             ])
 
             await bot.send_message(
@@ -174,34 +195,27 @@ async def check_birthdays(monthly_list=False):
                 message_thread_id=int(THREAD_ID) if THREAD_ID else None
             )
 
-# ========================= ЛОГИКА ПОГОДЫ =========================
+# ... (остальной код погоды и main без изменений) ...
 async def send_weather():
     logger.info("--- ЗАПРОС ПОГОДЫ ---")
     city = "Kstovo" 
     try:
         r = requests.get(f"https://wttr.in/{city}?format=%c+%t,+%C,+ощущается+как+%f&lang=ru")
         weather_text = r.text.strip()
-        
         bot = Bot(token=TOKEN)
-        # Поменял "на завтрашний" на "на сегодняшний"
         msg = f"<b>Прогноз погоды на сегодняшний старт в Кстово:</b>\n\n🌡 {weather_text}\n\nОдевайтесь по погоде и берите с собой горячий чай! ☕️🏃‍♂️"
         async with bot:
             await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=int(THREAD_ID) if THREAD_ID else None)
     except Exception as e:
         logger.error(f"Ошибка погоды: {e}")
 
-# ========================= ТОЧКА ВХОДА =========================
 async def main():
     if len(sys.argv) < 2: return
     mode = sys.argv[1]
-    if mode == "--titles":
-        await update_titles()
-    elif mode == "--birthdays":
-        await check_birthdays(monthly_list=False)
-    elif mode == "--birthdays-month":
-        await check_birthdays(monthly_list=True)
-    elif mode == "--weather":
-        await send_weather()
+    if mode == "--titles": await update_titles()
+    elif mode == "--birthdays": await check_birthdays(monthly_list=False)
+    elif mode == "--birthdays-month": await check_birthdays(monthly_list=True)
+    elif mode == "--weather": await send_weather()
 
 if __name__ == "__main__":
     asyncio.run(main())
