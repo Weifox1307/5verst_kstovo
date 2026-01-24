@@ -2,7 +2,7 @@ name: Daily Birthday Notification
 
 on:
   schedule:
-    - cron: '0 6 * * *' # 09:00 по МСК
+    - cron: '0 6 * * *' # Ежедневно в 09:00 МСК
   workflow_dispatch:
 
 jobs:
@@ -15,9 +15,19 @@ jobs:
           python-version: '3.10'
       - name: Install deps
         run: pip install python-telegram-bot requests pandas pytz
-      - name: Run
+      - name: Run Daily
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SHEET_BIRTHDAYS_URL: ${{ secrets.SHEET_BIRTHDAYS_URL }}
           THREAD_ID: ${{ secrets.THREAD_ID }}
+          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
         run: python bot.py --birthdays
+      
+      - name: Run Monthly List (1st day only)
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && startsWith(github.event.schedule, '0 6 1 * *'))
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SHEET_BIRTHDAYS_URL: ${{ secrets.SHEET_BIRTHDAYS_URL }}
+          THREAD_ID: ${{ secrets.THREAD_ID }}
+          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
+        run: python bot.py --birthdays-month
