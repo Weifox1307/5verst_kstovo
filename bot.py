@@ -161,8 +161,6 @@ async def check_birthdays(monthly_list=False):
         elif not monthly_list and congrats_list:
             msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats_list) + "\n\nПоздравляем! 🎉🏃‍♂️"
             
-            # Добавляем кнопку "Поздравить"
-            # Ссылка t.me/share/url создает кнопку, которая предлагает переслать текст в чат
             share_text = requests.utils.quote("С днём рождения! Желаю легких ног и крутых рекордов! 🎉🏃‍♂️")
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("Поздравить! 🥳", url=f"https://t.me/share/url?url={share_text}")]
@@ -185,7 +183,8 @@ async def send_weather():
         weather_text = r.text.strip()
         
         bot = Bot(token=TOKEN)
-        msg = f"<b>Прогноз погоды на субботний старт в Кстово:</b>\n\n🌡 {weather_text}\n\nОдевайтесь по погоде и берите с собой горячий чай! ☕️🏃‍♂️"
+        # Поменял "на завтрашний" на "на сегодняшний"
+        msg = f"<b>Прогноз погоды на сегодняшний старт в Кстово:</b>\n\n🌡 {weather_text}\n\nОдевайтесь по погоде и берите с собой горячий чай! ☕️🏃‍♂️"
         async with bot:
             await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=int(THREAD_ID) if THREAD_ID else None)
     except Exception as e:
