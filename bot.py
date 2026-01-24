@@ -10,7 +10,7 @@ import sys
 from io import StringIO
 from datetime import datetime
 import pandas as pd
-from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton, CopyTextButton
 from telegram.constants import ParseMode
 
 # ========================= КОНФИГ =========================
@@ -167,26 +167,29 @@ async def check_birthdays(monthly_list=False):
             all_nicks = ", ".join(today_mentions)
             congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
             
-            # РЕШЕНИЕ ОШИБКИ: Выносим join за пределы f-строки
             congrats_names_block = "\n".join(congrats_list)
             
             msg = (
                 f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n"
                 f"{congrats_names_block}\n\n"
                 f"Поздравляем! 🎉\n\n"
-                f"💡 <i>Нажмите кнопку ниже, чтобы подготовить поздравление. Текст сразу появится в поле ввода!</i>"
+                f"📝 <b>Инструкция для поздравления:</b>\n"
+                f"1. Нажмите на кнопку <b>«Скопировать»</b>\n"
+                f"2. Удерживайте поле ввода и выберите <b>«Вставить»</b>\n\n"
+                f"<code>{congrats_text}</code>"
             )
 
-            btn_universal = InlineKeyboardButton(
-                text="🥳 Поздравить 🎉", 
-                switch_inline_query_current_chat=congrats_text
+            # ОДНА кнопка с НОВЫМ методом копирования текста
+            btn_copy = InlineKeyboardButton(
+                text="🎉 Поздравить 🥳", 
+                copy_text=CopyTextButton(text=congrats_text)
             )
 
             await bot.send_message(
                 chat_id=int(TARGET_CHAT_ID), 
                 text=msg, 
                 parse_mode=ParseMode.HTML, 
-                reply_markup=InlineKeyboardMarkup([[btn_universal]]),
+                reply_markup=InlineKeyboardMarkup([[btn_copy]]),
                 message_thread_id=int(THREAD_ID) if THREAD_ID else None
             )
 
