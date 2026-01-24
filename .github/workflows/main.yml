@@ -30,12 +30,13 @@ jobs:
           NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
           SHEET_BASE_URL: ${{ secrets.SHEET_BASE_URL }}
           SHEET_FORM_URL: ${{ secrets.SHEET_FORM_URL }}
-        run: python bot.py --titles  # ДОБАВИЛИ ФЛАГ
+          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
+        run: python bot.py --titles 
 
       - name: Save Cache to Repo
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
           git add 5verst_cache.json
-          git commit -m "Auto-update cache from Google Sheets" || echo "No changes"
+          git commit -m "Auto-update cache" || echo "No changes"
           git push
