@@ -170,21 +170,22 @@ async def check_birthdays(monthly_list=False):
             all_nicks = ", ".join(today_mentions)
             congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
             
-            # РЕШЕНИЕ: Две кнопки для разных систем
-            # 1. Кнопка копирования (CopyTextButton) - идеально для iOS
-            # 2. Кнопка вставки (switch_inline_query_current_chat) - идеально для Android/ПК
-            
+            # РЕШЕНИЕ: Кнопки в столбик (каждая в своем списке [])
             btn_copy = InlineKeyboardButton(
-                text="🎉 Поздравить 🥳 (для iOS пользователей)", 
+                text="🎉 Поздравить 🥳 (для iOS)", 
                 copy_text=CopyTextButton(text=congrats_text)
             )
             
             btn_insert = InlineKeyboardButton(
-                text="🎉 Поздравить 🥳 (для Android|ПК пользователей)", 
+                text="🎉 Поздравить 🥳 (для Android|ПК)", 
                 switch_inline_query_current_chat=congrats_text
             )
 
-            keyboard = InlineKeyboardMarkup([[btn_copy, btn_insert]])
+            # Каждая кнопка на новой строке
+            keyboard = InlineKeyboardMarkup([
+                [btn_copy],
+                [btn_insert]
+            ])
 
             await bot.send_message(
                 chat_id=int(TARGET_CHAT_ID), 
