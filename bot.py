@@ -11,7 +11,12 @@ from io import StringIO
 from datetime import datetime
 import urllib.parse
 import pandas as pd
-from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import (
+    Bot,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CopyText  # ← добавлен этот импорт!
+)
 from telegram.constants import ParseMode
 
 # ========================= КОНФИГ =========================
@@ -168,15 +173,15 @@ async def check_birthdays(monthly_list=False):
             all_nicks = ", ".join(today_mentions)
             congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
 
-            # Кнопка 1: Копировать в буфер обмена (надёжно на iOS и везде)
+            # Кнопка 1: Копировать в буфер обмена (работает на всех платформах)
             copy_button = InlineKeyboardButton(
-                text="Скопировать поздравление 📋",
-                copy_text=congrats_text
+                text="Поздравить (iOS)🎉",
+                copy_text=CopyText(text=congrats_text)
             )
 
-            # Кнопка 2: Вставить прямо в поле ввода (удобно на Android / ПК)
+            # Кнопка 2: Вставить в поле ввода (удобно на Android / ПК / ноутбуке)
             insert_button = InlineKeyboardButton(
-                text="Вставить в чат 🪄",
+                text="Поздравить (Android|ПК)🎉",
                 switch_inline_query_current_chat=congrats_text
             )
 
