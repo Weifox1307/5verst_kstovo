@@ -2,7 +2,7 @@ name: Friday Weather Forecast
 
 on:
   schedule:
-    - cron: '0 16 * * 5' # 19:00 по МСК в пятницу
+    - cron: '0 16 * * 5' # Пятница 19:00 по МСК
   workflow_dispatch:
 
 jobs:
