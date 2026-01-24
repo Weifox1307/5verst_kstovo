@@ -167,14 +167,16 @@ async def check_birthdays(monthly_list=False):
             all_nicks = ", ".join(today_mentions)
             congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
             
+            # РЕШЕНИЕ ОШИБКИ: Выносим join за пределы f-строки
+            congrats_names_block = "\n".join(congrats_list)
+            
             msg = (
                 f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n"
-                f"{'\n'.join(congrats_list)}\n\n"
+                f"{congrats_names_block}\n\n"
                 f"Поздравляем! 🎉\n\n"
                 f"💡 <i>Нажмите кнопку ниже, чтобы подготовить поздравление. Текст сразу появится в поле ввода!</i>"
             )
 
-            # ОДНА универсальная кнопка для всех платформ
             btn_universal = InlineKeyboardButton(
                 text="🥳 Поздравить 🎉", 
                 switch_inline_query_current_chat=congrats_text
