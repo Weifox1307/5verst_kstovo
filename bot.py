@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Общие данные
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TARGET_CHAT_ID = "-1002607891507"
+TARGET_CHAT_ID = os.getenv("TARGET_CHAT_ID", "-1002607891507")
 TIMEZONE = "Europe/Moscow"
 
 # Для ТИТУЛОВ
@@ -30,9 +30,8 @@ SHEET_FORM_URL = os.getenv("SHEET_FORM_URL")
 CACHE_FILE = "5verst_cache.json"
 
 # Для ДНЕЙ РОЖДЕНИЙ
-# Создай этот секрет в GitHub Actions или замени ссылкой напрямую
 SHEET_BIRTHDAYS_URL = os.getenv("SHEET_BIRTHDAYS_URL") 
-THREAD_ID = os.getenv("THREAD_ID") # Если нужно слать в ветку
+THREAD_ID = os.getenv("THREAD_ID")
 
 # ========================= ВСПОМОГАТЕЛЬНОЕ =========================
 def extract_id(input_str):
@@ -58,7 +57,6 @@ async def update_titles():
     else:
         cache = {TARGET_CHAT_ID: {}}
 
-    # 1. Загрузка Базы и Формы (как в твоем исходном коде)
     valid_chat_members = set()
     try:
         res_base = requests.get(SHEET_BASE_URL, timeout=20)
@@ -76,6 +74,7 @@ async def update_titles():
             f_tg_id = extract_id(row.iloc[1])
             f_v5_id = extract_id(row.iloc[2])
             if f_tg_id and f_v5_id and f_tg_id in valid_chat_members:
+                if TARGET_CHAT_ID not in cache: cache[TARGET_CHAT_ID] = {}
                 cache[TARGET_CHAT_ID][str(f_tg_id)] = int(f_v5_id)
     except Exception as e:
         logger.error(f"Ошибка формы: {e}")
@@ -87,7 +86,7 @@ async def update_titles():
     if not headers: return
 
     bot = Bot(token=TOKEN)
-    for tg_id, v5_id in cache[TARGET_CHAT_ID].items():
+    for tg_id, v5_id in cache.get(TARGET_CHAT_ID, {}).items():
         try:
             r = requests.post("https://nrms.5verst.ru/api/v1/website/athlete/statById", 
                               json={"id": v5_id}, headers=headers, timeout=15)
@@ -112,23 +111,21 @@ async def update_titles():
             logger.warning(f"Ошибка для {tg_id}: {e}")
 
 # ========================= ЛОГИКА ДНЕЙ РОЖДЕНИЙ =========================
-async def check_birthdays():
-    logger.info("--- СТАРТ ПРОВЕРКИ ДНЕЙ РОЖДЕНИЯ ---")
-    if not SHEET_BIRTHDAYS_URL:
-        logger.error("URL таблицы ДР не задан!")
-        return
+async def check_birthdays(monthly_list=False):
+    logger.info(f"--- СТАРТ ПРОВЕРКИ ДР (Месяц: {monthly_list}) ---")
+    if not SHEET_BIRTHDAYS_URL: return
 
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
     congrats_list = []
+    month_list = []
 
     try:
         res = requests.get(SHEET_BIRTHDAYS_URL)
         res.encoding = 'utf-8'
         df = pd.read_csv(StringIO(res.text)).fillna("")
     except Exception as e:
-        logger.error(f"Ошибка чтения таблицы ДР: {e}")
-        return
+        logger.error(f"Ошибка таблицы ДР: {e}"); return
 
     for _, row in df.iterrows():
         try:
@@ -136,39 +133,52 @@ async def check_birthdays():
             bd_val = str(row['birthday']).strip()
             if not bd_val or bd_val.lower() == "nan": continue
 
-            clean_bd = bd_val.replace('/', '.').replace('-', '.')
-            parts = clean_bd.split('.')
+            parts = bd_val.replace('/', '.').replace('-', '.').split('.')
             if len(parts) < 2: continue
             
             d_t, m_t = int(float(parts[0])), int(float(parts[1]))
-            
-            if d_t == now.day and m_t == now.month:
-                username = str(row.get('username', '')).strip()
-                mention = f"@{username.replace('@','')}" if username and username.lower() not in ["nan", "none", ""] else html.escape(name)
-                
+            username = str(row.get('username', '')).strip()
+            mention = f"@{username.replace('@','')}" if username and username.lower() not in ["nan", "none", ""] else html.escape(name)
+
+            if monthly_list:
+                if m_t == now.month:
+                    month_list.append(f"• {d_t:02d}.{m_t:02d} — {mention}")
+            elif d_t == now.day and m_t == now.month:
                 age_text = ""
                 if len(parts) == 3:
                     try:
                         year_t = int(float(parts[2]))
                         if 1900 < year_t < now.year: age_text = f" ({now.year - year_t} лет)"
                     except: pass
-                
                 congrats_list.append(f"<b>{mention}</b>{age_text}")
         except: continue
 
-    if congrats_list:
+    bot = Bot(token=TOKEN)
+    async with bot:
+        if monthly_list and month_list:
+            month_name = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"][now.month-1]
+            msg = f"🎂 <b>Именинники в {month_name}:</b>\n\n" + "\n".join(sorted(month_list))
+            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=int(THREAD_ID) if THREAD_ID else None)
+        elif not monthly_list and congrats_list:
+            msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats_list) + "\n\nПоздравляем! 🎉"
+            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=int(THREAD_ID) if THREAD_ID else None)
+
+# ========================= ЛОГИКА ПОГОДЫ =========================
+async def send_weather():
+    logger.info("--- ЗАПРОС ПОГОДЫ ---")
+    # Город для Юбилейного (Краснодар или твой вариант, допустим Нижний Новгород для Станкозавода)
+    city = "Nizhny Novgorod" 
+    try:
+        # Запрашиваем прогноз на субботу (wttr.in/City?format=...)
+        r = requests.get(f"https://wttr.in/{city}?format=%c+%t,+%C,+ощущается+как+%f&lang=ru")
+        weather_text = r.text.strip()
+        
         bot = Bot(token=TOKEN)
-        msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats_list) + "\n\nПоздравляем! 🎉🏃‍♂️"
+        msg = f"<b>Прогноз погоды на завтрашний старт:</b>\n\n🌡 {weather_text}\n\nОдевайтесь по погоде и не забывайте горячий чай! ☕️🏃‍♂️"
         async with bot:
-            await bot.send_message(
-                chat_id=int(TARGET_CHAT_ID),
-                text=msg,
-                parse_mode=ParseMode.HTML,
-                message_thread_id=int(THREAD_ID) if THREAD_ID else None
-            )
-        logger.info("Поздравления отправлены!")
-    else:
-        logger.info("Сегодня нет именинников.")
+            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=int(THREAD_ID) if THREAD_ID else None)
+    except Exception as e:
+        logger.error(f"Ошибка погоды: {e}")
 
 # ========================= ТОЧКА ВХОДА =========================
 async def main():
@@ -176,9 +186,13 @@ async def main():
     if mode == "--titles":
         await update_titles()
     elif mode == "--birthdays":
-        await check_birthdays()
+        await check_birthdays(monthly_list=False)
+    elif mode == "--birthdays-month":
+        await check_birthdays(monthly_list=True)
+    elif mode == "--weather":
+        await send_weather()
     else:
-        logger.error("Используйте флаг --titles или --birthdays")
+        logger.error("Нет валидного флага")
 
 if __name__ == "__main__":
     asyncio.run(main())
