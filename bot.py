@@ -28,7 +28,8 @@ SHEET_FORM_URL = os.getenv("SHEET_FORM_URL")
 CACHE_FILE = "5verst_cache.json"
 
 SHEET_BIRTHDAYS_URL = os.getenv("SHEET_BIRTHDAYS_URL") 
-THREAD_ID = os.getenv("THREAD_ID")
+THREAD_ID_ENV = os.getenv("THREAD_ID")
+THREAD_ID = int(THREAD_ID_ENV) if THREAD_ID_ENV and THREAD_ID_ENV.strip() else None
 
 # ========================= ВСПОМОГАТЕЛЬНОЕ =========================
 def extract_id(input_str):
@@ -41,9 +42,15 @@ def login_5verst():
     try:
         r = requests.post("https://nrms.5verst.ru/api/v1/auth/login", 
                           json={"username": NRMS_USERNAME, "password": NRMS_PASSWORD}, timeout=15)
+        r.raise_for_status()
         token = r.json().get("result", {}).get("token")
-        return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"} if token else None
-    except: return None
+        if token:
+            return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        logger.error("Не удалось получить токен NRMS")
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка авторизации NRMS: {e}")
+        return None
 
 # ========================= ЛОГИКА ТИТУЛОВ =========================
 async def update_titles():
@@ -52,7 +59,7 @@ async def update_titles():
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             cache = json.load(f)
     else:
-        cache = {TARGET_CHAT_ID: {}}
+        cache = {str(TARGET_CHAT_ID): {}}
 
     valid_chat_members = set()
     try:
@@ -71,8 +78,8 @@ async def update_titles():
             f_tg_id = extract_id(row.iloc[1])
             f_v5_id = extract_id(row.iloc[2])
             if f_tg_id and f_v5_id and f_tg_id in valid_chat_members:
-                if TARGET_CHAT_ID not in cache: cache[TARGET_CHAT_ID] = {}
-                cache[TARGET_CHAT_ID][str(f_tg_id)] = int(f_v5_id)
+                if str(TARGET_CHAT_ID) not in cache: cache[str(TARGET_CHAT_ID)] = {}
+                cache[str(TARGET_CHAT_ID)][str(f_tg_id)] = int(f_v5_id)
     except Exception as e:
         logger.error(f"Ошибка формы: {e}")
 
@@ -83,29 +90,30 @@ async def update_titles():
     if not headers: return
 
     bot = Bot(token=TOKEN)
-    for tg_id, v5_id in cache.get(TARGET_CHAT_ID, {}).items():
-        try:
-            r = requests.post("https://nrms.5verst.ru/api/v1/website/athlete/statById", 
-                              json={"id": v5_id}, headers=headers, timeout=15)
-            stats = r.json().get("result")
-            if not stats: continue
-
-            m = stats.get("personal_best", {}).get("club_membership", {})
-            run = {"run500":"500","run250":"250","run100":"100","run50":"50","run25":"25","run10":"10"}.get(m.get("run"), "")
-            vol = {"vol500":"500","vol250":"250","vol100":"100","vol50":"50","vol25":"25","vol10":"10"}.get(m.get("volunteer"), "")
-            badges = [b for b in [run, vol] if b]
-            title = f"Клуб {'|'.join(badges)}" if badges else "Новичок"
-
-            uid = int(tg_id)
+    async with bot:
+        for tg_id, v5_id in cache.get(str(TARGET_CHAT_ID), {}).items():
             try:
-                await bot.promote_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=uid, can_manage_chat=True, can_invite_users=True)
-            except: pass
+                r = requests.post("https://nrms.5verst.ru/api/v1/website/athlete/statById", 
+                                  json={"id": v5_id}, headers=headers, timeout=15)
+                stats = r.json().get("result")
+                if not stats: continue
 
-            await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
-            logger.info(f"Успешно: {uid} -> {title}")
-            await asyncio.sleep(0.8)
-        except Exception as e:
-            logger.warning(f"Ошибка для {tg_id}: {e}")
+                m = stats.get("personal_best", {}).get("club_membership", {})
+                run = {"run500":"500","run250":"250","run100":"100","run50":"50","run25":"25","run10":"10"}.get(m.get("run"), "")
+                vol = {"vol500":"500","vol250":"250","vol100":"100","vol50":"50","vol25":"25","vol10":"10"}.get(m.get("volunteer"), "")
+                badges = [b for b in [run, vol] if b]
+                title = f"Клуб {'|'.join(badges)}" if badges else "Новичок"
+
+                uid = int(tg_id)
+                try:
+                    await bot.promote_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=uid, can_manage_chat=True, can_invite_users=True)
+                except: pass
+
+                await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
+                logger.info(f"Успешно: {uid} -> {title}")
+                await asyncio.sleep(0.8)
+            except Exception as e:
+                logger.warning(f"Ошибка для {tg_id}: {e}")
 
 # ========================= ЛОГИКА ДНЕЙ РОЖДЕНИЙ =========================
 async def check_birthdays(monthly_list=False):
@@ -119,7 +127,7 @@ async def check_birthdays(monthly_list=False):
     today_mentions = []
 
     try:
-        res = requests.get(SHEET_BIRTHDAYS_URL)
+        res = requests.get(SHEET_BIRTHDAYS_URL, timeout=30)
         res.encoding = 'utf-8'
         df = pd.read_csv(StringIO(res.text)).fillna("")
     except Exception as e:
@@ -141,11 +149,12 @@ async def check_birthdays(monthly_list=False):
             elif d_t == now.day and m_t == now.month:
                 username = str(row.get('username', '')).strip()
                 clean_un = username.replace('@','')
-                mention = f"@{clean_un}" if clean_un and clean_un.lower() not in ["nan", "none", ""] else html.escape(name)
                 
                 if clean_un and clean_un.lower() not in ["nan", "none", ""]:
+                    mention = f"@{clean_un}"
                     today_mentions.append(f"@{clean_un}")
                 else:
+                    mention = html.escape(name)
                     today_mentions.append(name)
 
                 age_text = ""
@@ -162,7 +171,7 @@ async def check_birthdays(monthly_list=False):
         if monthly_list and month_list:
             months = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"]
             msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(month_list))
-            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=int(THREAD_ID) if THREAD_ID else None)
+            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
         elif not monthly_list and congrats_list:
             all_nicks = ", ".join(today_mentions)
             congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
@@ -178,7 +187,6 @@ async def check_birthdays(monthly_list=False):
                 f"2. Удерживайте поле ввода и выберите <b>«Вставить»</b>"
             )
 
-            # Кнопка с методом копирования текста без визуального дубля в тексте
             btn_copy = InlineKeyboardButton(
                 text="🥳 Поздравить 🥳", 
                 copy_text=CopyTextButton(text=congrats_text)
@@ -189,19 +197,28 @@ async def check_birthdays(monthly_list=False):
                 text=msg, 
                 parse_mode=ParseMode.HTML, 
                 reply_markup=InlineKeyboardMarkup([[btn_copy]]),
-                message_thread_id=int(THREAD_ID) if THREAD_ID else None
+                message_thread_id=THREAD_ID
             )
 
 # ========================= ПОГОДА =========================
 async def send_weather():
     city = "Kstovo" 
     try:
-        r = requests.get(f"https://wttr.in/{city}?format=%c+%t,+%C,+ощущается+как+%f&lang=ru")
+        # Увеличил таймаут и добавил проверку на ошибки
+        r = requests.get(f"https://wttr.in/{city}?format=%c+%t,+%C,+ощущается+как+%f&lang=ru", timeout=15)
+        r.raise_for_status()
         weather_text = r.text.strip()
+        
         bot = Bot(token=TOKEN)
         msg = f"<b>Прогноз погоды на сегодняшний старт в Кстово:</b>\n\n🌡 {weather_text}\n\nОдевайтесь по погоде и берите с собой горячий чай! ☕️🏃‍♂️"
         async with bot:
-            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=int(THREAD_ID) if THREAD_ID else None)
+            await bot.send_message(
+                chat_id=int(TARGET_CHAT_ID), 
+                text=msg, 
+                parse_mode=ParseMode.HTML, 
+                message_thread_id=THREAD_ID
+            )
+        logger.info("Погода отправлена успешно.")
     except Exception as e:
         logger.error(f"Ошибка погоды: {e}")
 
