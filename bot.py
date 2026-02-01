@@ -46,7 +46,6 @@ def login_5verst():
         token = r.json().get("result", {}).get("token")
         if token:
             return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        logger.error("Не удалось получить токен NRMS")
         return None
     except Exception as e:
         logger.error(f"Ошибка авторизации NRMS: {e}")
@@ -175,7 +174,6 @@ async def check_birthdays(monthly_list=False):
         elif not monthly_list and congrats_list:
             all_nicks = ", ".join(today_mentions)
             congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
-            
             congrats_names_block = "\n".join(congrats_list)
             
             msg = (
@@ -187,11 +185,7 @@ async def check_birthdays(monthly_list=False):
                 f"2. Удерживайте поле ввода и выберите <b>«Вставить»</b>"
             )
 
-            btn_copy = InlineKeyboardButton(
-                text="🥳 Поздравить 🥳", 
-                copy_text=CopyTextButton(text=congrats_text)
-            )
-
+            btn_copy = InlineKeyboardButton(text="🥳 Поздравить 🥳", copy_text=CopyTextButton(text=congrats_text))
             await bot.send_message(
                 chat_id=int(TARGET_CHAT_ID), 
                 text=msg, 
@@ -200,17 +194,38 @@ async def check_birthdays(monthly_list=False):
                 message_thread_id=THREAD_ID
             )
 
-# ========================= ПОГОДА =========================
+# ========================= ПОГОДА (OPEN-METEO) =========================
 async def send_weather():
-    city = "Kstovo" 
+    # Координаты Кстово
+    lat, lon = 56.1508, 44.1956
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code&wind_speed_unit=ms&timezone=Europe%2FMoscow"
+    
+    # Коды погоды Open-Meteo -> Текстовое описание
+    weather_codes = {
+        0: "Ясно ☀️", 1: "Преимущественно ясно 🌤", 2: "Переменная облачность ⛅️", 3: "Пасмурно ☁️",
+        45: "Туман 🌫", 48: "Иней 🌫", 51: "Морось 🌧", 53: "Умеренная морось 🌧", 55: "Плотная морось 🌧",
+        61: "Небольшой дождь 🌦", 63: "Дождь 🌧", 65: "Сильный дождь 🌧",
+        71: "Небольшой снег 🌨", 73: "Снег ❄️", 75: "Сильный снег ❄️",
+        77: "Снежные зерна ❄️", 80: "Слабый ливень 🌦", 81: "Ливень 🌧", 82: "Сильный ливень 🌧",
+        85: "Небольшой снегопад 🌨", 86: "Сильный снегопад 🌨", 95: "Гроза ⛈"
+    }
+
     try:
-        # Увеличил таймаут и добавил проверку на ошибки
-        r = requests.get(f"https://wttr.in/{city}?format=%c+%t,+%C,+ощущается+как+%f&lang=ru", timeout=15)
+        r = requests.get(url, timeout=15)
         r.raise_for_status()
-        weather_text = r.text.strip()
+        data = r.json().get("current", {})
+        
+        temp = data.get("temperature_2m")
+        app_temp = data.get("apparent_temperature")
+        code = data.get("weather_code", 0)
+        hum = data.get("relative_humidity_2m")
+        
+        desc = weather_codes.get(code, "Неизвестно")
+        weather_str = f"{desc}, {temp}°C, ощущается как {app_temp}°C, влажность {hum}%"
         
         bot = Bot(token=TOKEN)
-        msg = f"<b>Прогноз погоды на сегодняшний старт в Кстово:</b>\n\n🌡 {weather_text}\n\nОдевайтесь по погоде и берите с собой горячий чай! ☕️🏃‍♂️"
+        msg = f"<b>Прогноз погоды на сегодняшний старт в Кстово:</b>\n\n🌡 {weather_str}\n\nОдевайтесь по погоде и берите с собой горячий чай! ☕️🏃‍♂️"
+        
         async with bot:
             await bot.send_message(
                 chat_id=int(TARGET_CHAT_ID), 
@@ -218,9 +233,9 @@ async def send_weather():
                 parse_mode=ParseMode.HTML, 
                 message_thread_id=THREAD_ID
             )
-        logger.info("Погода отправлена успешно.")
+        logger.info("Погода (Open-Meteo) отправлена успешно.")
     except Exception as e:
-        logger.error(f"Ошибка погоды: {e}")
+        logger.error(f"Ошибка погоды Open-Meteo: {e}")
 
 # ========================= MAIN =========================
 async def main():
