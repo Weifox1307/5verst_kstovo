@@ -2,8 +2,18 @@ name: Daily Birthday Notification
 
 on:
   schedule:
-    - cron: '0 6 * * *' # Ежедневно в 09:00 МСК
+    - cron: '0 6 * * *' # Автоматика каждый день в 09:00 МСК
   workflow_dispatch:
+    inputs:
+      manual_mode:
+        description: 'Выберите режим запуска (для ручного запуска)'
+        required: true
+        default: '--birthdays-auto'
+        type: choice
+        options:
+          - '--birthdays-auto'
+          - '--birthdays-month'
+          - '--birthdays'
 
 jobs:
   run_birthdays:
@@ -15,10 +25,16 @@ jobs:
           python-version: '3.10'
       - name: Install deps
         run: pip install python-telegram-bot requests pandas pytz
-      - name: Run Daily Birthdays
+      - name: Run Birthdays
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SHEET_BIRTHDAYS_URL: ${{ secrets.SHEET_BIRTHDAYS_URL }}
           THREAD_ID: ${{ secrets.THREAD_ID }}
           TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
-        run: python bot.py --birthdays-auto
+        # Если запуск ручной — берем выбранный флаг, если по расписанию — используем авто-режим
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            python bot.py ${{ github.event.inputs.manual_mode }}
+          else
+            python bot.py --birthdays-auto
+          fi
