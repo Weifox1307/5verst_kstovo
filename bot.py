@@ -116,7 +116,7 @@ async def update_titles():
 
 # ========================= ЛОГИКА ДНЕЙ РОЖДЕНИЙ =========================
 async def check_birthdays(monthly_list=False):
-    logger.info(f"--- СТАРТ ПРОВЕРКИ ДР ---")
+    logger.info(f"--- СТАРТ ПРОВЕРКИ ДР (Monthly: {monthly_list}) ---")
     if not SHEET_BIRTHDAYS_URL: return
 
     tz = pytz.timezone(TIMEZONE)
@@ -167,40 +167,44 @@ async def check_birthdays(monthly_list=False):
 
     bot = Bot(token=TOKEN)
     async with bot:
-        if monthly_list and month_list:
-            months = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"]
-            msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(month_list))
-            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-        elif not monthly_list and congrats_list:
-            all_nicks = ", ".join(today_mentions)
-            congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
-            congrats_names_block = "\n".join(congrats_list)
-            
-            msg = (
-                f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n"
-                f"{congrats_names_block}\n\n"
-                f"Поздравляем! 🎉\n\n"
-                f"📝 <b>Инструкция для поздравления:</b>\n"
-                f"1. Нажмите на кнопку <b>«🥳 Поздравить 🥳»</b>\n"
-                f"2. Удерживайте поле ввода и выберите <b>«Вставить»</b>"
-            )
+        if monthly_list:
+            if month_list:
+                months = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"]
+                msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(month_list))
+                await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+                logger.info("Список на месяц отправлен.")
+        else:
+            if congrats_list:
+                all_nicks = ", ".join(today_mentions)
+                congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
+                congrats_names_block = "\n".join(congrats_list)
+                
+                msg = (
+                    f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n"
+                    f"{congrats_names_block}\n\n"
+                    f"Поздравляем! 🎉\n\n"
+                    f"📝 <b>Инструкция для поздравления:</b>\n"
+                    f"1. Нажмите на кнопку <b>«🥳 Поздравить 🥳»</b>\n"
+                    f"2. Удерживайте поле ввода и выберите <b>«Вставить»</b>"
+                )
 
-            btn_copy = InlineKeyboardButton(text="🥳 Поздравить 🥳", copy_text=CopyTextButton(text=congrats_text))
-            await bot.send_message(
-                chat_id=int(TARGET_CHAT_ID), 
-                text=msg, 
-                parse_mode=ParseMode.HTML, 
-                reply_markup=InlineKeyboardMarkup([[btn_copy]]),
-                message_thread_id=THREAD_ID
-            )
+                btn_copy = InlineKeyboardButton(text="🥳 Поздравить 🥳", copy_text=CopyTextButton(text=congrats_text))
+                await bot.send_message(
+                    chat_id=int(TARGET_CHAT_ID), 
+                    text=msg, 
+                    parse_mode=ParseMode.HTML, 
+                    reply_markup=InlineKeyboardMarkup([[btn_copy]]),
+                    message_thread_id=THREAD_ID
+                )
+                logger.info("Поздравление на сегодня отправлено.")
+            else:
+                logger.info("Сегодня именинников нет.")
 
 # ========================= ПОГОДА (OPEN-METEO) =========================
 async def send_weather():
-    # Координаты Кстово
     lat, lon = 56.1508, 44.1956
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code&wind_speed_unit=ms&timezone=Europe%2FMoscow"
     
-    # Коды погоды Open-Meteo -> Текстовое описание
     weather_codes = {
         0: "Ясно ☀️", 1: "Преимущественно ясно 🌤", 2: "Переменная облачность ⛅️", 3: "Пасмурно ☁️",
         45: "Туман 🌫", 48: "Иней 🌫", 51: "Морось 🌧", 53: "Умеренная морось 🌧", 55: "Плотная морось 🌧",
@@ -214,12 +218,10 @@ async def send_weather():
         r = requests.get(url, timeout=15)
         r.raise_for_status()
         data = r.json().get("current", {})
-        
         temp = data.get("temperature_2m")
         app_temp = data.get("apparent_temperature")
         code = data.get("weather_code", 0)
         hum = data.get("relative_humidity_2m")
-        
         desc = weather_codes.get(code, "Неизвестно")
         weather_str = f"{desc}, {temp}°C, ощущается как {app_temp}°C, влажность {hum}%"
         
@@ -227,24 +229,38 @@ async def send_weather():
         msg = f"<b>Прогноз погоды на сегодняшний старт в Кстово:</b>\n\n🌡 {weather_str}\n\nОдевайтесь по погоде и берите с собой горячий чай! ☕️🏃‍♂️"
         
         async with bot:
-            await bot.send_message(
-                chat_id=int(TARGET_CHAT_ID), 
-                text=msg, 
-                parse_mode=ParseMode.HTML, 
-                message_thread_id=THREAD_ID
-            )
-        logger.info("Погода (Open-Meteo) отправлена успешно.")
+            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+        logger.info("Погода отправлена успешно.")
     except Exception as e:
-        logger.error(f"Ошибка погоды Open-Meteo: {e}")
+        logger.error(f"Ошибка погоды: {e}")
 
 # ========================= MAIN =========================
 async def main():
     if len(sys.argv) < 2: return
     mode = sys.argv[1]
-    if mode == "--titles": await update_titles()
-    elif mode == "--birthdays": await check_birthdays(monthly_list=False)
-    elif mode == "--birthdays-month": await check_birthdays(monthly_list=True)
-    elif mode == "--weather": await send_weather()
+    
+    if mode == "--titles": 
+        await update_titles()
+    elif mode == "--birthdays": 
+        await check_birthdays(monthly_list=False)
+    elif mode == "--birthdays-month": 
+        await check_birthdays(monthly_list=True)
+    elif mode == "--weather": 
+        await send_weather()
+    elif mode == "--birthdays-auto":
+        # Умный режим для ежедневного запуска
+        tz = pytz.timezone(TIMEZONE)
+        now = datetime.now(tz)
+        
+        # 1. Сначала всегда поздравляем тех, у кого ДР сегодня
+        await check_birthdays(monthly_list=False)
+        
+        # 2. Если сегодня 1-е число месяца, отправляем список на весь месяц
+        if now.day == 1:
+            logger.info("Сегодня 1-е число! Отправляю список на месяц...")
+            await check_birthdays(monthly_list=True)
+        else:
+            logger.info(f"Сегодня {now.day}-е число, месячный список не требуется.")
 
 if __name__ == "__main__":
     asyncio.run(main())
