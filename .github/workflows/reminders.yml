@@ -1,0 +1,56 @@
+name: Event Organizers Reminders
+
+on:
+  schedule:
+    # Воскресенье 12:00 МСК (09:00 UTC)
+    - cron: '0 9 * * 0'
+    # Вторник 10:00 МСК (07:00 UTC)
+    - cron: '0 7 * * 2'
+    # Четверг 10:00 МСК (07:00 UTC)
+    - cron: '0 7 * * 4'
+    # Суббота 18:00 МСК (15:00 UTC)
+    - cron: '0 15 * * 6'
+  workflow_dispatch: # Чтобы ты мог запустить вручную и проверить
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install python-telegram-bot
+
+      - name: Send Sunday Reminder
+        if: github.event.schedule == '0 9 * * 0' || github.event_name == 'workflow_dispatch'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ORGS_CHAT_ID: ${{ secrets.ORGS_CHAT_ID }}
+        run: python reminders.py sunday
+
+      - name: Send Tuesday Reminder
+        if: github.event.schedule == '0 7 * * 2'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ORGS_CHAT_ID: ${{ secrets.ORGS_CHAT_ID }}
+        run: python reminders.py tuesday
+
+      - name: Send Thursday Reminder
+        if: github.event.schedule == '0 7 * * 4'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ORGS_CHAT_ID: ${{ secrets.ORGS_CHAT_ID }}
+        run: python reminders.py thursday
+
+      - name: Send Saturday Evening Reminder
+        if: github.event.schedule == '0 15 * * 6'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ORGS_CHAT_ID: ${{ secrets.ORGS_CHAT_ID }}
+        run: python reminders.py saturday_evening
