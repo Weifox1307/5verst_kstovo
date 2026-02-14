@@ -35,9 +35,9 @@ SHEET_BIRTHDAYS_URL = os.getenv("SHEET_BIRTHDAYS_URL")
 THREAD_ID_ENV = os.getenv("THREAD_ID")
 THREAD_ID = int(THREAD_ID_ENV) if THREAD_ID_ENV and THREAD_ID_ENV.strip() else None
 
-# Настройки для результатов Кстово
+# Настройки для Кстово Юбилейный
 EVENT_ID = 10079
-VK_GROUP_ID = 231094435 # Группа Кстово
+VK_GROUP_ID = 231094435  # Группа Кстово Юбилейный
 VK_TOKEN = os.getenv("VK_TOKEN")
 
 # ========================= ВСПОМОГАТЕЛЬНОЕ =========================
@@ -126,7 +126,8 @@ async def update_titles():
 # ========================= ЛОГИКА РЕЗУЛЬТАТОВ =========================
 def get_results_data(date_str):
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-    url = f"https://5verst.ru/lukeryino/results/{url_date}/"
+    # Используем путь для Юбилейного
+    url = f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, timeout=15, headers=headers)
@@ -151,10 +152,13 @@ def get_vk_photo(display_date, run_num):
         p = {"owner_id": -VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131"}
         resp = requests.get("https://api.vk.com/method/photos.getAlbums", params=p).json()
         albums = resp.get("response", {}).get("items", [])
+        
+        # Поиск альбома по дате или номеру
         target = next((a for a in albums if date_pattern in re.sub(r'\D', '', a.get('title', ''))), None)
         if not target and run_num:
             target = next((a for a in albums if f"#{run_num}" in a.get('title', '') or f"№{run_num}" in a.get('title', '')), None)
         if not target and albums: target = albums[0]
+        
         if target:
             album_url = f"https://vk.com/album-{VK_GROUP_ID}_{target['id']}"
             p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
@@ -172,14 +176,17 @@ async def send_results():
     last_sat = now - timedelta(days=offset)
     date_str, disp_date = last_sat.strftime("%Y-%m-%d"), last_sat.strftime("%d.%m.%Y")
 
+    # Проверка на дубли через файл
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, "r") as f:
             if f.read().strip() == disp_date:
-                logger.info("Отчет за сегодня уже был.")
+                logger.info("Отчет за эту дату уже был отправлен.")
                 return
 
     count, web_url, run_num = get_results_data(date_str)
-    if count == 0: return
+    if count == 0:
+        logger.info(f"Результаты за {disp_date} еще не готовы.")
+        return
 
     headers = login_5verst()
     vols_text = ""
@@ -198,7 +205,7 @@ async def send_results():
         except: pass
 
     alb_url, img_url = get_vk_photo(disp_date, run_num)
-    msg = (f"🌳 <b>5 вёрст в парке Юбилейный | Кстово</b>\n"
+    msg = (f"🌳 <b>5 вёрст парк Юбилейный | Кстово</b>\n"
            f"🗓 <b>Старт от {disp_date}</b>\n"
            f"━━━━━━━━━━━━━━━━━━━━\n\n"
            f"🏁 Финишировало участников: <b>{count}</b>\n"
@@ -212,106 +219,69 @@ async def send_results():
             if img_url:
                 await bot.send_photo(int(TARGET_CHAT_ID), photo=img_url, caption=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
             else:
-                await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+                await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID, disable_web_page_preview=False)
             
+            # Запоминаем отправку
             with open(LOG_FILE, "w") as f: f.write(disp_date)
             subprocess.run(["git", "config", "user.name", "GitHub Action Bot"])
             subprocess.run(["git", "config", "user.email", "actions@github.com"])
             subprocess.run(["git", "add", LOG_FILE])
-            subprocess.run(["git", "commit", "-m", f"Auto: {disp_date} sent"])
+            subprocess.run(["git", "commit", "-m", f"Auto: Report for {disp_date} sent"])
             subprocess.run(["git", "push"])
+            logger.info("Отчет успешно отправлен и залогирован.")
         except Exception as e: logger.error(f"Ошибка отправки: {e}")
 
-# ========================= ЛОГИКА ДНЕЙ РОЖДЕНИЙ =========================
+# ========================= ОСТАЛЬНАЯ ЛОГИКА (ДР И ПОГОДА) =========================
 async def check_birthdays(monthly_list=False):
-    logger.info(f"--- СТАРТ ПРОВЕРКИ ДР (Monthly: {monthly_list}) ---")
     if not SHEET_BIRTHDAYS_URL: return
-
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
-    congrats_list = []
-    month_list = []
-    today_mentions = []
+    congrats_list, month_list, today_mentions = [], [], []
 
     try:
         res = requests.get(SHEET_BIRTHDAYS_URL, timeout=30)
         res.encoding = 'utf-8'
         df = pd.read_csv(StringIO(res.text)).fillna("")
-    except Exception as e:
-        logger.error(f"Ошибка таблицы ДР: {e}"); return
+    except: return
 
     for _, row in df.iterrows():
         try:
-            name = str(row['name']).strip()
-            bd_val = str(row['birthday']).strip()
-            if not bd_val or bd_val.lower() == "nan": continue
+            name, bd_val = str(row['name']).strip(), str(row['birthday']).strip()
             parts = bd_val.replace('/', '.').replace('-', '.').split('.')
-            if len(parts) < 2: continue
-            
             d_t, m_t = int(float(parts[0])), int(float(parts[1]))
-            
-            if monthly_list:
-                if m_t == now.month:
-                    month_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
-            elif d_t == now.day and m_t == now.month:
-                username = str(row.get('username', '')).strip()
-                clean_un = username.replace('@','')
-                
-                if clean_un and clean_un.lower() not in ["nan", "none", ""]:
-                    mention = f"@{clean_un}"
-                    today_mentions.append(f"@{clean_un}")
-                else:
-                    mention = html.escape(name)
-                    today_mentions.append(name)
-
-                age_text = ""
-                if len(parts) == 3:
-                    try:
-                        year_t = int(float(parts[2]))
-                        if 1900 < year_t < now.year: age_text = f" ({now.year - year_t} лет)"
-                    except: pass
-                congrats_list.append(f"<b>{mention}</b>{age_text}")
+            if monthly_list and m_t == now.month:
+                month_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
+            elif not monthly_list and d_t == now.day and m_t == now.month:
+                un = str(row.get('username', '')).strip().replace('@','')
+                mention = f"@{un}" if un and un.lower() not in ["nan",""] else html.escape(name)
+                today_mentions.append(mention)
+                age = f" ({now.year - int(float(parts[2]))} лет)" if len(parts)==3 else ""
+                congrats_list.append(f"<b>{mention}</b>{age}")
         except: continue
 
     bot = Bot(token=TOKEN)
     async with bot:
-        if monthly_list:
-            if month_list:
-                months = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"]
-                msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(month_list))
-                await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-        else:
-            if congrats_list:
-                all_nicks = ", ".join(today_mentions)
-                congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
-                congrats_names_block = "\n".join(congrats_list)
-                
-                msg = (f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n"
-                       f"{congrats_names_block}\n\n"
-                       f"Поздравляем! 🎉\n\n"
-                       f"📝 <b>Инструкция для поздравления:</b>\n"
-                       f"1. Нажмите на кнопку <b>«🥳 Поздравить 🥳»</b>\n"
-                       f"2. Удерживайте поле ввода и выберите <b>«Вставить»</b>")
-                btn_copy = InlineKeyboardButton(text="🥳 Поздравить 🥳", copy_text=CopyTextButton(text=congrats_text))
-                await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, 
-                                       reply_markup=InlineKeyboardMarkup([[btn_copy]]), message_thread_id=THREAD_ID)
+        if monthly_list and month_list:
+            months = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"]
+            msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(month_list))
+            await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+        elif not monthly_list and congrats_list:
+            c_text = f"{', '.join(today_mentions)}, с днем рождения! 🎉"
+            msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats_list)
+            btn = InlineKeyboardMarkup([[InlineKeyboardButton(text="🥳 Поздравить 🥳", copy_text=CopyTextButton(text=c_text))]])
+            await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, reply_markup=btn, message_thread_id=THREAD_ID)
 
-# ========================= ПОГОДА =========================
 async def send_weather():
-    lat, lon = 56.1508, 44.1956
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code&wind_speed_unit=ms&timezone=Europe%2FMoscow"
-    weather_codes = {0: "Ясно ☀️", 1: "Преимущественно ясно 🌤", 2: "Переменная облачность ⛅️", 3: "Пасмурно ☁️", 45: "Туман 🌫", 48: "Иней 🌫", 51: "Морось 🌧", 61: "Небольшой дождь 🌦", 71: "Небольшой снег 🌨", 73: "Снег ❄️", 95: "Гроза ⛈"}
+    lat, lon = 56.15, 44.20 # Кстово
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&timezone=Europe%2FMoscow"
     try:
-        r = requests.get(url, timeout=15).json().get("current", {})
-        temp, app_temp, code, hum = r.get("temperature_2m"), r.get("apparent_temperature"), r.get("weather_code", 0), r.get("relative_humidity_2m")
-        desc = weather_codes.get(code, "Неизвестно")
-        msg = f"<b>Прогноз погоды на сегодняшний старт в Кстово:</b>\n\n🌡 {desc}, {temp}°C, ощущается как {app_temp}°C, влажность {hum}%\n\nОдевайтесь по погоде! ☕️🏃‍♂️"
-        bot = Bot(token=TOKEN)
-        async with bot:
-            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+        r = requests.get(url).json().get("current", {})
+        temp, code = r.get("temperature_2m"), r.get("weather_code", 0)
+        msg = f"<b>Погода на старт:</b> {temp}°C. Хорошей пробежки! 🏃‍♂️"
+        async with Bot(token=TOKEN) as bot:
+            await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
     except: pass
 
-# ========================= MAIN =========================
 async def main():
     if len(sys.argv) < 2: return
     mode = sys.argv[1]
