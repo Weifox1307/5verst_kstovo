@@ -126,22 +126,34 @@ async def update_titles():
 # ========================= ЛОГИКА РЕЗУЛЬТАТОВ =========================
 def get_results_data(date_str):
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-    # Используем путь для Юбилейного
-    url = f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        response = requests.get(url, timeout=15, headers=headers)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
-            match = re.search(r'(?:№|#|старта)\s*(\d+)', h1_text, re.IGNORECASE)
-            run_num = match.group(1) if match else None
-            table = soup.find('table', class_='sortable')
-            if table and table.find('tbody'):
-                count = len(table.find('tbody').find_all('tr'))
-                if count > 0: return count, url, run_num
-    except: pass
-    return 0, url, None
+    urls_to_check = [
+        "https://5verst.ru/kstovoyubileyniy/results/latest/",
+        f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/"
+    ]
+    
+    # Эмулируем реальный браузер (это решит проблему "не готовы")
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    
+    for url in urls_to_check:
+        try:
+            logger.info(f"Проверяем URL: {url}")
+            response = requests.get(url, timeout=15, headers=headers)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                table = soup.find('table', class_='sortable')
+                if table and table.find('tbody'):
+                    rows = table.find('tbody').find_all('tr')
+                    count = len(rows)
+                    if count > 0:
+                        h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
+                        match = re.search(r'(?:№|#|старта)\s*(\d+)', h1_text, re.IGNORECASE)
+                        run_num = match.group(1) if match else None
+                        logger.info(f"Успех! Найдено финишеров: {count}")
+                        return count, url, run_num
+        except Exception as e:
+            logger.error(f"Ошибка при парсинге {url}: {e}")
+            
+    return 0, urls_to_check[0], None
 
 def get_vk_photo(display_date, run_num):
     album_url = f"https://vk.com/albums-{VK_GROUP_ID}"
@@ -153,7 +165,6 @@ def get_vk_photo(display_date, run_num):
         resp = requests.get("https://api.vk.com/method/photos.getAlbums", params=p).json()
         albums = resp.get("response", {}).get("items", [])
         
-        # Поиск альбома по дате или номеру
         target = next((a for a in albums if date_pattern in re.sub(r'\D', '', a.get('title', ''))), None)
         if not target and run_num:
             target = next((a for a in albums if f"#{run_num}" in a.get('title', '') or f"№{run_num}" in a.get('title', '')), None)
@@ -172,11 +183,17 @@ async def send_results():
     logger.info("--- ПРОВЕРКА РЕЗУЛЬТАТОВ ---")
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
-    offset = (now.weekday() - 5) % 7
-    last_sat = now - timedelta(days=offset)
+    
+    # Правильное определение субботы
+    if now.weekday() == 5: 
+        last_sat = now
+    else:
+        offset = (now.weekday() - 5) % 7
+        last_sat = now - timedelta(days=offset)
+        
     date_str, disp_date = last_sat.strftime("%Y-%m-%d"), last_sat.strftime("%d.%m.%Y")
+    logger.info(f"Ищем результаты за: {disp_date}")
 
-    # Проверка на дубли через файл
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, "r") as f:
             if f.read().strip() == disp_date:
@@ -185,7 +202,7 @@ async def send_results():
 
     count, web_url, run_num = get_results_data(date_str)
     if count == 0:
-        logger.info(f"Результаты за {disp_date} еще не готовы.")
+        logger.info(f"Результаты за {disp_date} еще не появились на сайте.")
         return
 
     headers = login_5verst()
@@ -198,8 +215,8 @@ async def send_results():
             if v_list:
                 vols = {}
                 for v in v_list:
-                    n, r = v.get("full_name"), v.get("role_name")
-                    vols[n] = vols.get(n, []) + [r]
+                    n, r_name = v.get("full_name"), v.get("role_name")
+                    vols[n] = vols.get(n, []) + [r_name]
                 vols_text = f"\n🧡 <b>Команда героев ({len(vols)}):</b> 💚\n" + \
                             "\n".join([f"• <b>{name}</b> — <i>{', '.join(roles)}</i>" for name, roles in vols.items()])
         except: pass
@@ -221,7 +238,6 @@ async def send_results():
             else:
                 await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID, disable_web_page_preview=False)
             
-            # Запоминаем отправку
             with open(LOG_FILE, "w") as f: f.write(disp_date)
             subprocess.run(["git", "config", "user.name", "GitHub Action Bot"])
             subprocess.run(["git", "config", "user.email", "actions@github.com"])
@@ -272,11 +288,11 @@ async def check_birthdays(monthly_list=False):
             await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, reply_markup=btn, message_thread_id=THREAD_ID)
 
 async def send_weather():
-    lat, lon = 56.15, 44.20 # Кстово
+    lat, lon = 56.15, 44.20
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&timezone=Europe%2FMoscow"
     try:
         r = requests.get(url).json().get("current", {})
-        temp, code = r.get("temperature_2m"), r.get("weather_code", 0)
+        temp = r.get("temperature_2m")
         msg = f"<b>Погода на старт:</b> {temp}°C. Хорошей пробежки! 🏃‍♂️"
         async with Bot(token=TOKEN) as bot:
             await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
