@@ -7,9 +7,12 @@ import re
 import html
 import pytz
 import sys
+import io
+import subprocess
 from io import StringIO
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
+from bs4 import BeautifulSoup
 from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton, CopyTextButton
 from telegram.constants import ParseMode
 
@@ -26,10 +29,16 @@ NRMS_PASSWORD = os.getenv("NRMS_PASSWORD")
 SHEET_BASE_URL = os.getenv("SHEET_BASE_URL")
 SHEET_FORM_URL = os.getenv("SHEET_FORM_URL")
 CACHE_FILE = "5verst_cache.json"
+LOG_FILE = "last_report.txt"
 
 SHEET_BIRTHDAYS_URL = os.getenv("SHEET_BIRTHDAYS_URL") 
 THREAD_ID_ENV = os.getenv("THREAD_ID")
 THREAD_ID = int(THREAD_ID_ENV) if THREAD_ID_ENV and THREAD_ID_ENV.strip() else None
+
+# Настройки для результатов Кстово
+EVENT_ID = 10079
+VK_GROUP_ID = 231094435 # Группа Кстово
+VK_TOKEN = os.getenv("VK_TOKEN")
 
 # ========================= ВСПОМОГАТЕЛЬНОЕ =========================
 def extract_id(input_str):
@@ -114,6 +123,105 @@ async def update_titles():
             except Exception as e:
                 logger.warning(f"Ошибка для {tg_id}: {e}")
 
+# ========================= ЛОГИКА РЕЗУЛЬТАТОВ =========================
+def get_results_data(date_str):
+    url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+    url = f"https://5verst.ru/lukeryino/results/{url_date}/"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, timeout=15, headers=headers)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
+            match = re.search(r'(?:№|#|старта)\s*(\d+)', h1_text, re.IGNORECASE)
+            run_num = match.group(1) if match else None
+            table = soup.find('table', class_='sortable')
+            if table and table.find('tbody'):
+                count = len(table.find('tbody').find_all('tr'))
+                if count > 0: return count, url, run_num
+    except: pass
+    return 0, url, None
+
+def get_vk_photo(display_date, run_num):
+    album_url = f"https://vk.com/albums-{VK_GROUP_ID}"
+    if not VK_TOKEN: return album_url, None
+    try:
+        day, month, _ = display_date.split('.')
+        date_pattern = f"{day}{month}"
+        p = {"owner_id": -VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131"}
+        resp = requests.get("https://api.vk.com/method/photos.getAlbums", params=p).json()
+        albums = resp.get("response", {}).get("items", [])
+        target = next((a for a in albums if date_pattern in re.sub(r'\D', '', a.get('title', ''))), None)
+        if not target and run_num:
+            target = next((a for a in albums if f"#{run_num}" in a.get('title', '') or f"№{run_num}" in a.get('title', '')), None)
+        if not target and albums: target = albums[0]
+        if target:
+            album_url = f"https://vk.com/album-{VK_GROUP_ID}_{target['id']}"
+            p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
+            photos = requests.get("https://api.vk.com/method/photos.get", params=p_img).json().get("response", {}).get("items", [])
+            if photos:
+                return album_url, sorted(photos[0].get("sizes", []), key=lambda x: x['width'])[-1]['url']
+    except: pass
+    return album_url, None
+
+async def send_results():
+    logger.info("--- ПРОВЕРКА РЕЗУЛЬТАТОВ ---")
+    tz = pytz.timezone(TIMEZONE)
+    now = datetime.now(tz)
+    offset = (now.weekday() - 5) % 7
+    last_sat = now - timedelta(days=offset)
+    date_str, disp_date = last_sat.strftime("%Y-%m-%d"), last_sat.strftime("%d.%m.%Y")
+
+    if os.path.exists(LOG_FILE):
+        with open(LOG_FILE, "r") as f:
+            if f.read().strip() == disp_date:
+                logger.info("Отчет за сегодня уже был.")
+                return
+
+    count, web_url, run_num = get_results_data(date_str)
+    if count == 0: return
+
+    headers = login_5verst()
+    vols_text = ""
+    if headers:
+        try:
+            r = requests.post("https://nrms.5verst.ru/api/v1/event/volunteer/list", 
+                              json={"event_id": EVENT_ID, "event_date": disp_date}, headers=headers)
+            v_list = r.json().get("result", {}).get("volunteer_list", [])
+            if v_list:
+                vols = {}
+                for v in v_list:
+                    n, r = v.get("full_name"), v.get("role_name")
+                    vols[n] = vols.get(n, []) + [r]
+                vols_text = f"\n🧡 <b>Команда героев ({len(vols)}):</b> 💚\n" + \
+                            "\n".join([f"• <b>{name}</b> — <i>{', '.join(roles)}</i>" for name, roles in vols.items()])
+        except: pass
+
+    alb_url, img_url = get_vk_photo(disp_date, run_num)
+    msg = (f"🌳 <b>5 вёрст в парке Юбилейный | Кстово</b>\n"
+           f"🗓 <b>Старт от {disp_date}</b>\n"
+           f"━━━━━━━━━━━━━━━━━━━━\n\n"
+           f"🏁 Финишировало участников: <b>{count}</b>\n"
+           f"{vols_text}\n\n"
+           f"📊 <a href='{web_url}'>Протокол</a>\n"
+           f"📸 <a href='{alb_url}'>Фотографии</a>")
+
+    bot = Bot(token=TOKEN)
+    async with bot:
+        try:
+            if img_url:
+                await bot.send_photo(int(TARGET_CHAT_ID), photo=img_url, caption=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            else:
+                await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            
+            with open(LOG_FILE, "w") as f: f.write(disp_date)
+            subprocess.run(["git", "config", "user.name", "GitHub Action Bot"])
+            subprocess.run(["git", "config", "user.email", "actions@github.com"])
+            subprocess.run(["git", "add", LOG_FILE])
+            subprocess.run(["git", "commit", "-m", f"Auto: {disp_date} sent"])
+            subprocess.run(["git", "push"])
+        except Exception as e: logger.error(f"Ошибка отправки: {e}")
+
 # ========================= ЛОГИКА ДНЕЙ РОЖДЕНИЙ =========================
 async def check_birthdays(monthly_list=False):
     logger.info(f"--- СТАРТ ПРОВЕРКИ ДР (Monthly: {monthly_list}) ---")
@@ -172,95 +280,49 @@ async def check_birthdays(monthly_list=False):
                 months = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"]
                 msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(month_list))
                 await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-                logger.info("Список на месяц отправлен.")
         else:
             if congrats_list:
                 all_nicks = ", ".join(today_mentions)
                 congrats_text = f"{all_nicks}, с днем рождения! 🎉 Желаю легких ног и крутых рекордов! 🏃‍♂️"
                 congrats_names_block = "\n".join(congrats_list)
                 
-                msg = (
-                    f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n"
-                    f"{congrats_names_block}\n\n"
-                    f"Поздравляем! 🎉\n\n"
-                    f"📝 <b>Инструкция для поздравления:</b>\n"
-                    f"1. Нажмите на кнопку <b>«🥳 Поздравить 🥳»</b>\n"
-                    f"2. Удерживайте поле ввода и выберите <b>«Вставить»</b>"
-                )
-
+                msg = (f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n"
+                       f"{congrats_names_block}\n\n"
+                       f"Поздравляем! 🎉\n\n"
+                       f"📝 <b>Инструкция для поздравления:</b>\n"
+                       f"1. Нажмите на кнопку <b>«🥳 Поздравить 🥳»</b>\n"
+                       f"2. Удерживайте поле ввода и выберите <b>«Вставить»</b>")
                 btn_copy = InlineKeyboardButton(text="🥳 Поздравить 🥳", copy_text=CopyTextButton(text=congrats_text))
-                await bot.send_message(
-                    chat_id=int(TARGET_CHAT_ID), 
-                    text=msg, 
-                    parse_mode=ParseMode.HTML, 
-                    reply_markup=InlineKeyboardMarkup([[btn_copy]]),
-                    message_thread_id=THREAD_ID
-                )
-                logger.info("Поздравление на сегодня отправлено.")
-            else:
-                logger.info("Сегодня именинников нет.")
+                await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, 
+                                       reply_markup=InlineKeyboardMarkup([[btn_copy]]), message_thread_id=THREAD_ID)
 
-# ========================= ПОГОДА (OPEN-METEO) =========================
+# ========================= ПОГОДА =========================
 async def send_weather():
     lat, lon = 56.1508, 44.1956
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code&wind_speed_unit=ms&timezone=Europe%2FMoscow"
-    
-    weather_codes = {
-        0: "Ясно ☀️", 1: "Преимущественно ясно 🌤", 2: "Переменная облачность ⛅️", 3: "Пасмурно ☁️",
-        45: "Туман 🌫", 48: "Иней 🌫", 51: "Морось 🌧", 53: "Умеренная морось 🌧", 55: "Плотная морось 🌧",
-        61: "Небольшой дождь 🌦", 63: "Дождь 🌧", 65: "Сильный дождь 🌧",
-        71: "Небольшой снег 🌨", 73: "Снег ❄️", 75: "Сильный снег ❄️",
-        77: "Снежные зерна ❄️", 80: "Слабый ливень 🌦", 81: "Ливень 🌧", 82: "Сильный ливень 🌧",
-        85: "Небольшой снегопад 🌨", 86: "Сильный снегопад 🌨", 95: "Гроза ⛈"
-    }
-
+    weather_codes = {0: "Ясно ☀️", 1: "Преимущественно ясно 🌤", 2: "Переменная облачность ⛅️", 3: "Пасмурно ☁️", 45: "Туман 🌫", 48: "Иней 🌫", 51: "Морось 🌧", 61: "Небольшой дождь 🌦", 71: "Небольшой снег 🌨", 73: "Снег ❄️", 95: "Гроза ⛈"}
     try:
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        data = r.json().get("current", {})
-        temp = data.get("temperature_2m")
-        app_temp = data.get("apparent_temperature")
-        code = data.get("weather_code", 0)
-        hum = data.get("relative_humidity_2m")
+        r = requests.get(url, timeout=15).json().get("current", {})
+        temp, app_temp, code, hum = r.get("temperature_2m"), r.get("apparent_temperature"), r.get("weather_code", 0), r.get("relative_humidity_2m")
         desc = weather_codes.get(code, "Неизвестно")
-        weather_str = f"{desc}, {temp}°C, ощущается как {app_temp}°C, влажность {hum}%"
-        
+        msg = f"<b>Прогноз погоды на сегодняшний старт в Кстово:</b>\n\n🌡 {desc}, {temp}°C, ощущается как {app_temp}°C, влажность {hum}%\n\nОдевайтесь по погоде! ☕️🏃‍♂️"
         bot = Bot(token=TOKEN)
-        msg = f"<b>Прогноз погоды на сегодняшний старт в Кстово:</b>\n\n🌡 {weather_str}\n\nОдевайтесь по погоде и берите с собой горячий чай! ☕️🏃‍♂️"
-        
         async with bot:
             await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-        logger.info("Погода отправлена успешно.")
-    except Exception as e:
-        logger.error(f"Ошибка погоды: {e}")
+    except: pass
 
 # ========================= MAIN =========================
 async def main():
     if len(sys.argv) < 2: return
     mode = sys.argv[1]
-    
-    if mode == "--titles": 
-        await update_titles()
-    elif mode == "--birthdays": 
-        await check_birthdays(monthly_list=False)
-    elif mode == "--birthdays-month": 
-        await check_birthdays(monthly_list=True)
-    elif mode == "--weather": 
-        await send_weather()
+    if mode == "--titles": await update_titles()
+    elif mode == "--birthdays": await check_birthdays(False)
+    elif mode == "--birthdays-month": await check_birthdays(True)
+    elif mode == "--weather": await send_weather()
+    elif mode == "--results": await send_results()
     elif mode == "--birthdays-auto":
-        # Умный режим для ежедневного запуска
-        tz = pytz.timezone(TIMEZONE)
-        now = datetime.now(tz)
-        
-        # 1. Сначала всегда поздравляем тех, у кого ДР сегодня
-        await check_birthdays(monthly_list=False)
-        
-        # 2. Если сегодня 1-е число месяца, отправляем список на весь месяц
-        if now.day == 1:
-            logger.info("Сегодня 1-е число! Отправляю список на месяц...")
-            await check_birthdays(monthly_list=True)
-        else:
-            logger.info(f"Сегодня {now.day}-е число, месячный список не требуется.")
+        await check_birthdays(False)
+        if datetime.now(pytz.timezone(TIMEZONE)).day == 1: await check_birthdays(True)
 
 if __name__ == "__main__":
     asyncio.run(main())
