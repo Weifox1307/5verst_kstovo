@@ -1,18 +1,19 @@
-name: Daily Birthday Notification
+name: Birthdays Notification
 
 on:
   schedule:
-    - cron: '0 6 * * *' # Автоматика каждый день в 09:00 МСК
+    - cron: '0 6 * * *' # Каждый день в 09:00 МСК
   workflow_dispatch:
     inputs:
       manual_mode:
-        description: 'Выберите режим запуска (для ручного запуска)'
+        description: 'Режим запуска'
         required: true
         default: '--birthdays-auto'
         type: choice
         options:
           - '--birthdays-auto'
           - '--birthdays-month'
+          - '--birthdays-week'
           - '--birthdays'
 
 jobs:
@@ -31,7 +32,6 @@ jobs:
           SHEET_BIRTHDAYS_URL: ${{ secrets.SHEET_BIRTHDAYS_URL }}
           THREAD_ID: ${{ secrets.THREAD_ID }}
           TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
-        # Если запуск ручной — берем выбранный флаг, если по расписанию — используем авто-режим
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             python bot.py ${{ github.event.inputs.manual_mode }}
