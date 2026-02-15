@@ -13,7 +13,7 @@ from io import StringIO
 from datetime import datetime, timedelta
 import pandas as pd
 from bs4 import BeautifulSoup
-from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton, CopyTextButton
+from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 
 # ========================= КОНФИГ =========================
@@ -33,7 +33,7 @@ CACHE_FILE = "5verst_cache.json"
 LOG_FILE = "last_report.txt"
 VK_MEMBERS_FILE = "vk_members.json"
 
-SHEET_BIRTHDAYS_URL = os.getenv("SHEET_BIRTHDAYS_URL") 
+SHEET_BIRTHDAYS_URL = os.getenv("SHEET_BIRTHDAYS_URL")
 THREAD_ID_ENV = os.getenv("THREAD_ID")
 THREAD_ID = int(THREAD_ID_ENV) if THREAD_ID_ENV and THREAD_ID_ENV.strip() else None
 
@@ -244,30 +244,35 @@ async def check_birthdays(mode="day"):
         res = requests.get(SHEET_BIRTHDAYS_URL, timeout=30)
         res.encoding = 'utf-8'
         df = pd.read_csv(StringIO(res.text)).fillna("")
-    except: return
+    except Exception as e:
+        logger.error(f"Ошибка загрузки таблицы ДР: {e}")
+        return
 
     congrats, report_list = [], []
     
-    # Определение диапазона для недели
-    start_week = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_week = start_week + timedelta(days=7)
+    # Границы текущей недели (ПН - ВС)
+    monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
 
     for _, row in df.iterrows():
         try:
             name, bd_val = str(row['name']).strip(), str(row['birthday']).strip()
-            parts = bd_val.replace('/', '.').replace('-', '.').split('.')
+            bd_val = bd_val.replace('/', '.').replace('-', '.')
+            parts = bd_val.split('.')
             d_t, m_t = int(float(parts[0])), int(float(parts[1]))
             
             if mode == "month" and m_t == now.month:
                 report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
+            
             elif mode == "day" and d_t == now.day and m_t == now.month:
                 un = str(row.get('username', '')).strip().replace('@','')
                 mention = f"@{un}" if un and un.lower() not in ["nan",""] else html.escape(name)
                 age = f" ({now.year - int(float(parts[2]))} лет)" if len(parts)==3 else ""
                 congrats.append(f"<b>{mention}</b>{age}")
+            
             elif mode == "week":
-                bd_this_year = datetime(now.year, m_t, d_t)
-                if start_week <= bd_this_year < end_week:
+                bd_this_year = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
+                if monday <= bd_this_year <= sunday:
                     report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
         except: continue
 
@@ -277,9 +282,14 @@ async def check_birthdays(mode="day"):
             months = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"]
             msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(report_list))
             await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-        elif mode == "week" and report_list:
-            msg = f"📅 <b>Дни рождения на этой неделе:</b>\n\n" + "\n".join(sorted(report_list))
-            await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+        
+        elif mode == "week":
+            if report_list:
+                msg = f"📅 <b>Дни рождения на этой неделе ({monday.strftime('%d.%m')} - {sunday.strftime('%d.%m')}):</b>\n\n" + "\n".join(sorted(report_list))
+                await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            else:
+                logger.info("На этой неделе именинников нет.")
+        
         elif mode == "day" and congrats:
             msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats)
             await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
@@ -310,7 +320,7 @@ async def check_new_vk_members():
                 await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
 
         with open(VK_MEMBERS_FILE, "w") as f: json.dump(current_ids, f)
-        if len(new_names) > 0: git_push()
+        if len(new_names) > 0 or not old_ids: git_push()
     except Exception as e: logger.error(f"VK Members Error: {e}")
 
 async def send_weekly_stats():
@@ -320,27 +330,21 @@ async def send_weekly_stats():
     
     bot = Bot(token=TOKEN)
     async with bot:
-        # 1. ТГ Участники
         tg_count = await bot.get_chat_member_count(int(TARGET_CHAT_ID))
-        
-        # 2. ВК Участники
         vk_resp = requests.get("https://api.vk.com/method/groups.getMembers", 
                                params={"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131", "count": 0}).json()
         vk_count = vk_resp.get("response", {}).get("count", 0)
 
-        # 3. Новые участники и волонтеры (через NRMS)
-        # Берем данные за последнюю субботу
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
         offset = (now.weekday() - 5) % 7
-        last_sat = (now - timedelta(days=offset)).strftime("%d.%m.%Y")
+        last_sat_dt = now - timedelta(days=offset)
+        last_sat_str = last_sat_dt.strftime("%d.%m.%Y")
         
-        # Кол-во финишировавших
-        count_finish, _, _ = get_results_data((now - timedelta(days=offset)).strftime("%Y-%m-%d"))
+        count_finish, _, _ = get_results_data(last_sat_dt.strftime("%Y-%m-%d"))
         
-        # Кол-во волонтеров
         v_resp = requests.post("https://nrms.5verst.ru/api/v1/event/volunteer/list", 
-                               json={"event_id": EVENT_ID, "event_date": last_sat}, headers=headers).json()
+                               json={"event_id": EVENT_ID, "event_date": last_sat_str}, headers=headers).json()
         v_list = v_resp.get("result", {}).get("volunteer_list", [])
         vol_count = len(set([v.get("full_name") for v in v_list]))
 
@@ -353,7 +357,6 @@ async def send_weekly_stats():
                f"• Волонтеров: <b>{vol_count}</b>\n\n"
                f"🧡 Увидимся на 5 вёрст 🧡!")
         
-        # Отправляем в чат оргов если он указан, иначе в основной
         chat_id = ORGS_CHAT_ID if ORGS_CHAT_ID else TARGET_CHAT_ID
         await bot.send_message(int(chat_id), text=msg, parse_mode=ParseMode.HTML)
 
