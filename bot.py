@@ -90,7 +90,7 @@ async def update_vk_status():
         requests.get("https://api.vk.com/method/status.set", 
                      params={"group_id": VK_GROUP_ID, "text": status_text, "access_token": VK_TOKEN, "v": "5.131"})
         
-        # 2. Обновляем время мероприятия (блок "Дополнительная информация")
+        # 2. Обновляем время мероприятия (поля из "Дополнительной информации")
         edit_params = {
             "group_id": VK_GROUP_ID,
             "event_start_date": start_ts,
@@ -166,7 +166,9 @@ async def update_titles():
 
 # ========================= ЛОГИКА РЕЗУЛЬТАТОВ =========================
 def get_results_data(date_str):
+    """date_str: YYYY-MM-DD"""
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+    # Пробуем дату и latest
     urls_to_check = [f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/", "https://5verst.ru/kstovoyubileyniy/results/latest/"]
     headers = {"User-Agent": "Mozilla/5.0"}
     
@@ -175,6 +177,7 @@ def get_results_data(date_str):
             response = requests.get(url, timeout=15, headers=headers)
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
+                # Ищем всех участников в таблице
                 rows = soup.select("table.sortable tbody tr")
                 if rows:
                     h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
@@ -251,7 +254,7 @@ async def send_results():
             with open(LOG_FILE, "w") as f: f.write(disp_date)
             git_push()
             await update_vk_status()
-        except Exception as e: logger.error(f"Ошибка отправки: {e}")
+        except Exception as e: logger.error(f"Ошибка отправки результатов: {e}")
 
 def git_push():
     try:
@@ -323,12 +326,14 @@ async def send_weekly_stats():
     if not headers or not VK_TOKEN: return
     bot = Bot(token=TOKEN)
     async with bot:
-        tg_count = await bot.get_chat_member_count(int(TARGET_CHAT_ID))
+        try:
+            tg_count = await bot.get_chat_member_count(int(TARGET_CHAT_ID))
+        except: tg_count = "неизвестно"
+        
         vk_count = requests.get("https://api.vk.com/method/groups.getMembers", params={"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131", "count": 0}).json().get("response", {}).get("count", 0)
         
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
-        
         offset = (now.weekday() - 5) % 7
         last_sat_dt = now - timedelta(days=offset)
         last_sat_str = last_sat_dt.strftime("%d.%m.%Y")
@@ -338,7 +343,11 @@ async def send_weekly_stats():
         msg = (f"📈 <b>ИТОГИ НЕДЕЛИ | КСТОВО</b>\n\n👥 <b>Аудитория:</b>\n• ТГ: <b>{tg_count}</b>\n• ВК: <b>{vk_count}</b>\n\n"
                f"🏃‍♂️ <b>Старт {last_sat_str}:</b>\n• Финишировало: <b>{count_finish}</b>")
         
-        if ORGS_CHAT_ID: await bot.send_message(int(ORGS_CHAT_ID), text=msg, parse_mode=ParseMode.HTML)
+        if ORGS_CHAT_ID:
+            try:
+                await bot.send_message(int(ORGS_CHAT_ID), text=msg, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Не удалось отправить статистику в ORGS_CHAT_ID ({ORGS_CHAT_ID}): {e}")
 
 async def main():
     if len(sys.argv) < 2: return
