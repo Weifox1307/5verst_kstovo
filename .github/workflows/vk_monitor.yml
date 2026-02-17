@@ -3,7 +3,7 @@ name: VK Monitor and Stats
 on:
   schedule:
     - cron: '*/30 * * * *'  # Каждые 30 минут проверка ВК
-    - cron: '0 17 * * 6'    # Суббота 20:00 МСК — Итоги недели
+    - cron: '0 17 * * 6'    # Суббота 20:00 МСК — Итоги недели (только оргам)
   workflow_dispatch:
 
 jobs:
@@ -28,7 +28,7 @@ jobs:
           THREAD_ID: ${{ secrets.THREAD_ID }}
         run: python bot.py --vk-check
 
-      - name: Weekly Stats
+      - name: Weekly Stats to Orgs
         if: github.event.schedule == '0 17 * * 6' || github.event_name == 'workflow_dispatch'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -37,20 +37,10 @@ jobs:
           ORGS_CHAT_ID: ${{ secrets.ORGS_CHAT_ID }}
           NRMS_USERNAME: ${{ secrets.NRMS_USERNAME }}
           NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
-          THREAD_ID: ${{ secrets.THREAD_ID }}
         run: python bot.py --stats
 
       - name: Update VK Next Start Date
-        # Дополнительный запуск обновления статуса в субботу вечером для надежности
         if: github.event.schedule == '0 17 * * 6' || github.event_name == 'workflow_dispatch'
         env:
           VK_TOKEN: ${{ secrets.VK_TOKEN }}
         run: python bot.py --vk-update
-
-      - name: Save VK Members Cache
-        run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "actions@github.com"
-          git add vk_members.json || echo "No files to add"
-          git commit -m "Update VK members cache" || echo "No changes to commit"
-          git push || echo "Nothing to push"
