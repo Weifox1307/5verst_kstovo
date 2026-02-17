@@ -168,16 +168,19 @@ async def update_titles():
 def get_results_data(date_str):
     """date_str: YYYY-MM-DD"""
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-    # Пробуем дату и latest
     urls_to_check = [f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/", "https://5verst.ru/kstovoyubileyniy/results/latest/"]
-    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    # Имитируем реальный браузер, чтобы сайт не отдавал 0 результатов
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+    }
     
     for url in urls_to_check:
         try:
-            response = requests.get(url, timeout=15, headers=headers)
+            response = requests.get(url, timeout=20, headers=headers)
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
-                # Ищем всех участников в таблице
                 rows = soup.select("table.sortable tbody tr")
                 if rows:
                     h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
@@ -321,17 +324,22 @@ async def check_new_vk_members():
         if new_names or not old_ids: git_push()
     except: pass
 
+# ========================= ЕЖЕНЕДЕЛЬНЫЕ ИТОГИ =========================
 async def send_weekly_stats():
     headers = login_5verst()
     if not headers or not VK_TOKEN: return
+    
     bot = Bot(token=TOKEN)
     async with bot:
+        # Аудитория
         try:
             tg_count = await bot.get_chat_member_count(int(TARGET_CHAT_ID))
-        except: tg_count = "неизвестно"
+        except: tg_count = "???"
         
-        vk_count = requests.get("https://api.vk.com/method/groups.getMembers", params={"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131", "count": 0}).json().get("response", {}).get("count", 0)
+        vk_r = requests.get("https://api.vk.com/method/groups.getMembers", params={"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131", "count": 0}).json()
+        vk_count = vk_r.get("response", {}).get("count", "???")
         
+        # Последний старт
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
         offset = (now.weekday() - 5) % 7
@@ -340,9 +348,24 @@ async def send_weekly_stats():
         
         count_finish, _, _ = get_results_data(last_sat_dt.strftime("%Y-%m-%d"))
         
-        msg = (f"📈 <b>ИТОГИ НЕДЕЛИ | КСТОВО</b>\n\n👥 <b>Аудитория:</b>\n• ТГ: <b>{tg_count}</b>\n• ВК: <b>{vk_count}</b>\n\n"
-               f"🏃‍♂️ <b>Старт {last_sat_str}:</b>\n• Финишировало: <b>{count_finish}</b>")
+        # Кол-во волонтеров через NRMS
+        v_count = 0
+        try:
+            v_resp = requests.post("https://nrms.5verst.ru/api/v1/event/volunteer/list", 
+                                   json={"event_id": EVENT_ID, "event_date": last_sat_str}, headers=headers).json()
+            v_count = len(v_resp.get("result", {}).get("volunteer_list", []))
+        except: pass
+
+        msg = (f"📈 <b>ИТОГИ НЕДЕЛИ | КСТОВО</b>\n\n"
+               f"👥 <b>Сообщество:</b>\n"
+               f"• Telegram: <b>{tg_count}</b>\n"
+               f"• ВКонтакте: <b>{vk_count}</b>\n\n"
+               f"🏃‍♂️ <b>Последний старт ({last_sat_str}):</b>\n"
+               f"• Финишировало: <b>{count_finish}</b>\n"
+               f"• Волонтеров: <b>{v_count}</b>\n\n"
+               f"🧡 Увидимся на 5 вёрст 🧡!")
         
+        # Отправляем в чат организаторов, если ID указан
         if ORGS_CHAT_ID:
             try:
                 await bot.send_message(int(ORGS_CHAT_ID), text=msg, parse_mode=ParseMode.HTML)
