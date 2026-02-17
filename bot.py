@@ -70,6 +70,7 @@ async def update_vk_status():
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
     
+    # Расчет следующей субботы
     days_ahead = (5 - now.weekday()) % 7
     if days_ahead == 0 and now.hour > 11:
         days_ahead = 7
@@ -79,13 +80,20 @@ async def update_vk_status():
     status_text = f"Следующий старт: {date_str} в 09:00! Ждём вас в парке Юбилейный 🌳"
     
     try:
+        # 1. Обновляем статус (строчка под названием)
         url = "https://api.vk.com/method/status.set"
         params = {"group_id": VK_GROUP_ID, "text": status_text, "access_token": VK_TOKEN, "v": "5.131"}
         res = requests.get(url, params=params).json()
+        
+        # 2. Пытаемся обновить описание группы (где часто висит старая инфа)
+        desc_url = "https://api.vk.com/method/groups.edit"
+        # Мы не можем легко менять только кусок описания, поэтому пока ограничимся статусом.
+        # Если статус не виден, возможно, стоит проверить настройки приватности группы.
+        
         if "error" in res:
             logger.error(f"Ошибка ВК: {res['error']['error_msg']}")
         else:
-            logger.info(f"Статус ВК обновлен: {status_text}")
+            logger.info(f"Статус ВК успешно обновлен на: {status_text}")
     except Exception as e:
         logger.error(f"Ошибка обновления статуса: {e}")
 
@@ -147,21 +155,25 @@ async def update_titles():
 
 # ========================= ЛОГИКА РЕЗУЛЬТАТОВ =========================
 def get_results_data(date_str):
+    """date_str: YYYY-MM-DD"""
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-    urls_to_check = ["https://5verst.ru/kstovoyubileyniy/results/latest/", f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/"]
+    # Пробуем сначала конкретную дату, потом страницу latest
+    urls_to_check = [f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/", "https://5verst.ru/kstovoyubileyniy/results/latest/"]
     headers = {"User-Agent": "Mozilla/5.0"}
+    
     for url in urls_to_check:
         try:
             response = requests.get(url, timeout=15, headers=headers)
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
-                table = soup.find('table', class_='sortable')
-                if table and table.find('tbody'):
-                    rows = table.find('tbody').find_all('tr')
+                # Ищем количество строк в таблице результатов
+                rows = soup.select("table.sortable tbody tr")
+                if rows:
                     h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
                     match = re.search(r'(?:№|#|старта)\s*(\d+)', h1_text, re.IGNORECASE)
                     return len(rows), url, match.group(1) if match else None
-        except: pass
+        except Exception as e:
+            logger.error(f"Ошибка парсинга {url}: {e}")
     return 0, urls_to_check[0], None
 
 def get_vk_photo(display_date, run_num):
@@ -189,6 +201,7 @@ def get_vk_photo(display_date, run_num):
 async def send_results():
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
+    # Определяем прошлую субботу
     offset = (now.weekday() - 5) % 7
     last_sat = now - timedelta(days=offset)
     date_str, disp_date = last_sat.strftime("%Y-%m-%d"), last_sat.strftime("%d.%m.%Y")
@@ -198,7 +211,9 @@ async def send_results():
             if f.read().strip() == disp_date: return
 
     count, web_url, run_num = get_results_data(date_str)
-    if count == 0: return
+    if count == 0: 
+        logger.info(f"Результаты за {disp_date} еще не опубликованы.")
+        return
 
     headers = login_5verst()
     vols_text = ""
@@ -236,7 +251,7 @@ def git_push():
         subprocess.run(["git", "config", "user.name", "GitHub Action Bot"])
         subprocess.run(["git", "config", "user.email", "actions@github.com"])
         subprocess.run(["git", "add", LOG_FILE, VK_MEMBERS_FILE])
-        subprocess.run(["git", "commit", "-m", "Auto: Sync"])
+        subprocess.run(["git", "commit", "-m", "Auto: Sync logs"])
         subprocess.run(["git", "push"])
     except: pass
 
@@ -306,13 +321,17 @@ async def send_weekly_stats():
         
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
-        last_sat_str = (now - timedelta(days=(now.weekday() - 5) % 7)).strftime("%d.%m.%Y")
-        count_finish, _, _ = get_results_data((now - timedelta(days=(now.weekday() - 5) % 7)).strftime("%Y-%m-%d"))
         
-        msg = (f"📈 <b>ИТОГИ НЕДЕЛИ | КСТОВО</b>\n\n👥 <b>Аудитория:</b>\n• ТГ: {tg_count}\n• ВК: {vk_count}\n\n"
-               f"🏃‍♂️ <b>Старт {last_sat_str}:</b>\n• Финишировало: {count_finish}")
+        # Прошлая суббота
+        offset = (now.weekday() - 5) % 7
+        last_sat_dt = now - timedelta(days=offset)
+        last_sat_str = last_sat_dt.strftime("%d.%m.%Y")
         
-        # Шлем ТОЛЬКО в чат оргов
+        count_finish, _, _ = get_results_data(last_sat_dt.strftime("%Y-%m-%d"))
+        
+        msg = (f"📈 <b>ИТОГИ НЕДЕЛИ | КСТОВО</b>\n\n👥 <b>Аудитория:</b>\n• ТГ: <b>{tg_count}</b>\n• ВК: <b>{vk_count}</b>\n\n"
+               f"🏃‍♂️ <b>Старт {last_sat_str}:</b>\n• Финишировало: <b>{count_finish}</b>")
+        
         if ORGS_CHAT_ID: await bot.send_message(int(ORGS_CHAT_ID), text=msg, parse_mode=ParseMode.HTML)
 
 async def main():
