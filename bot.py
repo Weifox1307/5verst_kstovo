@@ -61,7 +61,7 @@ def login_5verst():
         logger.error(f"Ошибка авторизации NRMS: {e}")
         return None
 
-# ========================= ЛОГИКА ВК СТАТУСА =========================
+# ========================= ЛОГИКА ВК (СТАТУС И ДАТА) =========================
 async def update_vk_status():
     if not VK_TOKEN:
         logger.error("VK_TOKEN не настроен")
@@ -77,25 +77,36 @@ async def update_vk_status():
     
     next_sat = now + timedelta(days=days_ahead)
     date_str = next_sat.strftime("%d.%m.%Y")
+    
+    # Текст для обычного статуса
     status_text = f"Следующий старт: {date_str} в 09:00! Ждём вас в парке Юбилейный 🌳"
     
+    # UNIX-timestamp для настроек мероприятия (8:40 и 10:00)
+    start_ts = int(next_sat.replace(hour=8, minute=40, second=0, microsecond=0).timestamp())
+    end_ts = int(next_sat.replace(hour=10, minute=0, second=0, microsecond=0).timestamp())
+    
     try:
-        # 1. Обновляем статус (строчка под названием)
-        url = "https://api.vk.com/method/status.set"
-        params = {"group_id": VK_GROUP_ID, "text": status_text, "access_token": VK_TOKEN, "v": "5.131"}
-        res = requests.get(url, params=params).json()
+        # 1. Обновляем текстовый статус
+        requests.get("https://api.vk.com/method/status.set", 
+                     params={"group_id": VK_GROUP_ID, "text": status_text, "access_token": VK_TOKEN, "v": "5.131"})
         
-        # 2. Пытаемся обновить описание группы (где часто висит старая инфа)
-        desc_url = "https://api.vk.com/method/groups.edit"
-        # Мы не можем легко менять только кусок описания, поэтому пока ограничимся статусом.
-        # Если статус не виден, возможно, стоит проверить настройки приватности группы.
+        # 2. Обновляем время мероприятия (блок "Дополнительная информация")
+        edit_params = {
+            "group_id": VK_GROUP_ID,
+            "event_start_date": start_ts,
+            "event_finish_date": end_ts,
+            "access_token": VK_TOKEN,
+            "v": "5.131"
+        }
+        res_edit = requests.get("https://api.vk.com/method/groups.edit", params=edit_params).json()
         
-        if "error" in res:
-            logger.error(f"Ошибка ВК: {res['error']['error_msg']}")
+        if "error" in res_edit:
+            logger.error(f"Ошибка обновления даты ВК: {res_edit['error']['error_msg']}")
         else:
-            logger.info(f"Статус ВК успешно обновлен на: {status_text}")
+            logger.info(f"Дата мероприятия ВК обновлена на {date_str} (08:40 - 10:00)")
+            
     except Exception as e:
-        logger.error(f"Ошибка обновления статуса: {e}")
+        logger.error(f"Ошибка ВК API: {e}")
 
 # ========================= ЛОГИКА ТИТУЛОВ =========================
 async def update_titles():
@@ -155,9 +166,7 @@ async def update_titles():
 
 # ========================= ЛОГИКА РЕЗУЛЬТАТОВ =========================
 def get_results_data(date_str):
-    """date_str: YYYY-MM-DD"""
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-    # Пробуем сначала конкретную дату, потом страницу latest
     urls_to_check = [f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/", "https://5verst.ru/kstovoyubileyniy/results/latest/"]
     headers = {"User-Agent": "Mozilla/5.0"}
     
@@ -166,7 +175,6 @@ def get_results_data(date_str):
             response = requests.get(url, timeout=15, headers=headers)
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
-                # Ищем количество строк в таблице результатов
                 rows = soup.select("table.sortable tbody tr")
                 if rows:
                     h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
@@ -201,7 +209,6 @@ def get_vk_photo(display_date, run_num):
 async def send_results():
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
-    # Определяем прошлую субботу
     offset = (now.weekday() - 5) % 7
     last_sat = now - timedelta(days=offset)
     date_str, disp_date = last_sat.strftime("%Y-%m-%d"), last_sat.strftime("%d.%m.%Y")
@@ -322,7 +329,6 @@ async def send_weekly_stats():
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
         
-        # Прошлая суббота
         offset = (now.weekday() - 5) % 7
         last_sat_dt = now - timedelta(days=offset)
         last_sat_str = last_sat_dt.strftime("%d.%m.%Y")
