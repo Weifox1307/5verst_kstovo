@@ -70,6 +70,7 @@ async def update_vk_status():
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
     
+    # Расчет следующей субботы
     days_ahead = (5 - now.weekday()) % 7
     if days_ahead == 0 and now.hour > 11:
         days_ahead = 7
@@ -77,15 +78,19 @@ async def update_vk_status():
     next_sat = now + timedelta(days=days_ahead)
     date_str = next_sat.strftime("%d.%m.%Y")
     
+    # Текст для обычного статуса
     status_text = f"Следующий старт: {date_str} в 09:00! Ждём вас в парке Юбилейный 🌳"
     
+    # UNIX-timestamp для настроек мероприятия (8:40 и 10:00)
     start_ts = int(next_sat.replace(hour=8, minute=40, second=0, microsecond=0).timestamp())
     end_ts = int(next_sat.replace(hour=10, minute=0, second=0, microsecond=0).timestamp())
     
     try:
+        # 1. Обновляем текстовый статус
         requests.get("https://api.vk.com/method/status.set", 
                      params={"group_id": VK_GROUP_ID, "text": status_text, "access_token": VK_TOKEN, "v": "5.131"})
         
+        # 2. Обновляем время мероприятия (поля из "Дополнительной информации")
         edit_params = {
             "group_id": VK_GROUP_ID,
             "event_start_date": start_ts,
@@ -98,7 +103,7 @@ async def update_vk_status():
         if "error" in res_edit:
             logger.error(f"Ошибка обновления даты ВК: {res_edit['error']['error_msg']}")
         else:
-            logger.info(f"Дата мероприятия ВК обновлена на {date_str}")
+            logger.info(f"Дата мероприятия ВК обновлена на {date_str} (08:40 - 10:00)")
             
     except Exception as e:
         logger.error(f"Ошибка ВК API: {e}")
@@ -161,11 +166,15 @@ async def update_titles():
 
 # ========================= ЛОГИКА РЕЗУЛЬТАТОВ =========================
 def get_results_data(date_str):
+    """date_str: YYYY-MM-DD"""
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-    # Строгая привязка к Кстово
-    urls_to_check = [f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/"]
+    urls_to_check = [f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/", "https://5verst.ru/kstovoyubileyniy/results/latest/"]
     
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    # Имитируем реальный браузер, чтобы сайт не отдавал 0 результатов
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+    }
     
     for url in urls_to_check:
         try:
@@ -215,7 +224,9 @@ async def send_results():
             if f.read().strip() == disp_date: return
 
     count, web_url, run_num = get_results_data(date_str)
-    if count == 0: return
+    if count == 0: 
+        logger.info(f"Результаты за {disp_date} еще не опубликованы.")
+        return
 
     headers = login_5verst()
     vols_text = ""
@@ -235,8 +246,8 @@ async def send_results():
 
     alb_url, img_url = get_vk_photo(disp_date, run_num)
     msg = (f"🌳 <b>5 вёрст парк Юбилейный | Кстово</b>\n🗓 <b>Старт от {disp_date}</b>\n"
-           f"━━━━━━━━━━━━━━━━━━━━\n\n🏁 Финишировало: <b>{count}</b>\n{vols_text}\n\n"
-           f"📊 <a href='{web_url}'>Протокол</a>\n📸 <a href='{alb_url}'>Фотографии</a>")
+            f"━━━━━━━━━━━━━━━━━━━━\n\n🏁 Финишировало: <b>{count}</b>\n{vols_text}\n\n"
+            f"📊 <a href='{web_url}'>Протокол</a>\n📸 <a href='{alb_url}'>Фотографии</a>")
 
     bot = Bot(token=TOKEN)
     async with bot:
@@ -295,29 +306,49 @@ async def check_birthdays(mode="day"):
         elif mode == "day" and congrats:
             await bot.send_message(int(TARGET_CHAT_ID), text=f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n"+"\n".join(congrats), parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
 
-# ========================= ИТОГИ НЕДЕЛИ =========================
+# ========================= ВК МОНИТОРИНГ =========================
+async def check_new_vk_members():
+    if not VK_TOKEN: return
+    try:
+        p = {"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131"}
+        resp = requests.get("https://api.vk.com/method/groups.getMembers", params={**p, "fields": "first_name,last_name"}).json()
+        current_members = resp.get("response", {}).get("items", [])
+        old_ids = set(json.load(open(VK_MEMBERS_FILE)) if os.path.exists(VK_MEMBERS_FILE) else [])
+        
+        new_names = [f"<a href='https://vk.com/id{m['id']}'>{m['first_name']} {m['last_name']}</a>" for m in current_members if m['id'] not in old_ids and old_ids]
+        if new_names:
+            async with Bot(token=TOKEN) as bot:
+                await bot.send_message(int(TARGET_CHAT_ID), text=f"⚡️ <b>Новый подписчик в ВК!</b>\n\n{', '.join(new_names)} 🎉", parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+        
+        json.dump([m['id'] for m in current_members], open(VK_MEMBERS_FILE, "w"))
+        if new_names or not old_ids: git_push()
+    except: pass
+
+# ========================= ЕЖЕНЕДЕЛЬНЫЕ ИТОГИ =========================
 async def send_weekly_stats():
     headers = login_5verst()
     if not headers or not VK_TOKEN: return
     
     bot = Bot(token=TOKEN)
     async with bot:
-        try: tg_count = await bot.get_chat_member_count(int(TARGET_CHAT_ID))
+        # Аудитория
+        try:
+            tg_count = await bot.get_chat_member_count(int(TARGET_CHAT_ID))
         except: tg_count = "???"
         
         vk_r = requests.get("https://api.vk.com/method/groups.getMembers", params={"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131", "count": 0}).json()
         vk_count = vk_r.get("response", {}).get("count", "???")
         
+        # Последний старт
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
         offset = (now.weekday() - 5) % 7
         last_sat_dt = now - timedelta(days=offset)
         last_sat_str = last_sat_dt.strftime("%d.%m.%Y")
         
-        # Получаем ТОЧНЫЕ данные по финишерам
         count_finish, _, _ = get_results_data(last_sat_dt.strftime("%Y-%m-%d"))
         
-        # Получаем ТОЧНЫЕ данные по волонтерам из NRMS
+        # Кол-во волонтеров через NRMS
         v_count = 0
         try:
             v_resp = requests.post("https://nrms.5verst.ru/api/v1/event/volunteer/list", 
@@ -334,9 +365,12 @@ async def send_weekly_stats():
                f"• Волонтеров: <b>{v_count}</b>\n\n"
                f"🧡 Увидимся на 5 вёрст 🧡!")
         
+        # Отправляем в чат организаторов, если ID указан
         if ORGS_CHAT_ID:
-            try: await bot.send_message(int(ORGS_CHAT_ID), text=msg, parse_mode=ParseMode.HTML)
-            except: pass
+            try:
+                await bot.send_message(int(ORGS_CHAT_ID), text=msg, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Не удалось отправить статистику в ORGS_CHAT_ID ({ORGS_CHAT_ID}): {e}")
 
 async def main():
     if len(sys.argv) < 2: return
@@ -344,8 +378,13 @@ async def main():
     if m == "--titles": await update_titles()
     elif m == "--birthdays": await check_birthdays("day")
     elif m == "--results": await send_results()
+    elif m == "--vk-check": await check_new_vk_members()
     elif m == "--stats": await send_weekly_stats()
     elif m == "--vk-update": await update_vk_status()
+    elif m == "--birthdays-auto":
+        await check_birthdays("day")
+        if datetime.now(pytz.timezone(TIMEZONE)).day == 1: await check_birthdays("month")
+        if datetime.now(pytz.timezone(TIMEZONE)).weekday() == 0: await check_birthdays("week")
 
 if __name__ == "__main__":
     asyncio.run(main())
