@@ -70,7 +70,6 @@ async def update_vk_status():
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
     
-    # Расчет следующей субботы
     days_ahead = (5 - now.weekday()) % 7
     if days_ahead == 0 and now.hour > 11:
         days_ahead = 7
@@ -78,19 +77,15 @@ async def update_vk_status():
     next_sat = now + timedelta(days=days_ahead)
     date_str = next_sat.strftime("%d.%m.%Y")
     
-    # Текст для обычного статуса
     status_text = f"Следующий старт: {date_str} в 09:00! Ждём вас в парке Юбилейный 🌳"
     
-    # UNIX-timestamp для настроек мероприятия (8:40 и 10:00)
     start_ts = int(next_sat.replace(hour=8, minute=40, second=0, microsecond=0).timestamp())
     end_ts = int(next_sat.replace(hour=10, minute=0, second=0, microsecond=0).timestamp())
     
     try:
-        # 1. Обновляем текстовый статус
         requests.get("https://api.vk.com/method/status.set", 
                      params={"group_id": VK_GROUP_ID, "text": status_text, "access_token": VK_TOKEN, "v": "5.131"})
         
-        # 2. Обновляем время мероприятия (поля из "Дополнительной информации")
         edit_params = {
             "group_id": VK_GROUP_ID,
             "event_start_date": start_ts,
@@ -168,27 +163,32 @@ async def update_titles():
 def get_results_data(date_str):
     """date_str: YYYY-MM-DD"""
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-    urls_to_check = [f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/", "https://5verst.ru/kstovoyubileyniy/results/latest/"]
+    # Используем только прямую ссылку на дату для точности
+    url = f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/"
     
-    # Имитируем реальный браузер, чтобы сайт не отдавал 0 результатов
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
-    for url in urls_to_check:
-        try:
-            response = requests.get(url, timeout=20, headers=headers)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                rows = soup.select("table.sortable tbody tr")
-                if rows:
-                    h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
-                    match = re.search(r'(?:№|#|старта)\s*(\d+)', h1_text, re.IGNORECASE)
-                    return len(rows), url, match.group(1) if match else None
-        except Exception as e:
-            logger.error(f"Ошибка парсинга {url}: {e}")
-    return 0, urls_to_check[0], None
+    try:
+        response = requests.get(url, timeout=20, headers=headers)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            # Считаем только те строки, где в первой колонке реально стоит число (место финишера)
+            rows = soup.select("table.sortable tbody tr")
+            real_finishers = 0
+            for row in rows:
+                cells = row.find_all("td")
+                if cells and cells[0].get_text(strip=True).isdigit():
+                    real_finishers += 1
+            
+            if real_finishers > 0:
+                h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
+                match = re.search(r'(?:№|#|старта)\s*(\d+)', h1_text, re.IGNORECASE)
+                return real_finishers, url, match.group(1) if match else None
+    except Exception as e:
+        logger.error(f"Ошибка парсинга {url}: {e}")
+    return 0, url, None
 
 def get_vk_photo(display_date, run_num):
     album_url = f"https://vk.com/albums-{VK_GROUP_ID}"
@@ -230,6 +230,7 @@ async def send_results():
 
     headers = login_5verst()
     vols_text = ""
+    v_count_unique = 0
     if headers:
         try:
             r = requests.post("https://nrms.5verst.ru/api/v1/event/volunteer/list", 
@@ -240,7 +241,8 @@ async def send_results():
                 for v in v_list:
                     n, rn = v.get("full_name"), v.get("role_name")
                     vols[n] = vols.get(n, []) + [rn]
-                vols_text = f"\n🧡 <b>Команда героев ({len(vols)}):</b>\n" + \
+                v_count_unique = len(vols) # Количество уникальных людей
+                vols_text = f"\n🧡 <b>Команда героев ({v_count_unique}):</b>\n" + \
                             "\n".join([f"• <b>{name}</b> — <i>{', '.join(roles)}</i>" for name, roles in vols.items()])
         except: pass
 
@@ -346,14 +348,17 @@ async def send_weekly_stats():
         last_sat_dt = now - timedelta(days=offset)
         last_sat_str = last_sat_dt.strftime("%d.%m.%Y")
         
+        # Честный подсчет финишеров через новую логику
         count_finish, _, _ = get_results_data(last_sat_dt.strftime("%Y-%m-%d"))
         
-        # Кол-во волонтеров через NRMS
-        v_count = 0
+        # Честный подсчет УНИКАЛЬНЫХ волонтеров через NRMS
+        v_count_unique = 0
         try:
             v_resp = requests.post("https://nrms.5verst.ru/api/v1/event/volunteer/list", 
                                    json={"event_id": EVENT_ID, "event_date": last_sat_str}, headers=headers).json()
-            v_count = len(v_resp.get("result", {}).get("volunteer_list", []))
+            v_list = v_resp.get("result", {}).get("volunteer_list", [])
+            # Считаем количество уникальных full_name
+            v_count_unique = len(set(v.get("full_name") for v in v_list))
         except: pass
 
         msg = (f"📈 <b>ИТОГИ НЕДЕЛИ | КСТОВО</b>\n\n"
@@ -362,15 +367,14 @@ async def send_weekly_stats():
                f"• ВКонтакте: <b>{vk_count}</b>\n\n"
                f"🏃‍♂️ <b>Последний старт ({last_sat_str}):</b>\n"
                f"• Финишировало: <b>{count_finish}</b>\n"
-               f"• Волонтеров: <b>{v_count}</b>\n\n"
+               f"• Волонтеров: <b>{v_count_unique}</b>\n\n"
                f"🧡 Увидимся на 5 вёрст 🧡!")
         
-        # Отправляем в чат организаторов, если ID указан
         if ORGS_CHAT_ID:
             try:
                 await bot.send_message(int(ORGS_CHAT_ID), text=msg, parse_mode=ParseMode.HTML)
             except Exception as e:
-                logger.error(f"Не удалось отправить статистику в ORGS_CHAT_ID ({ORGS_CHAT_ID}): {e}")
+                logger.error(f"Не удалось отправить статистику в ORGS_CHAT_ID: {e}")
 
 async def main():
     if len(sys.argv) < 2: return
