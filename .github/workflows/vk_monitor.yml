@@ -37,4 +37,20 @@ jobs:
           ORGS_CHAT_ID: ${{ secrets.ORGS_CHAT_ID }}
           NRMS_USERNAME: ${{ secrets.NRMS_USERNAME }}
           NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
+          THREAD_ID: ${{ secrets.THREAD_ID }}
         run: python bot.py --stats
+
+      - name: Update VK Next Start Date
+        # Дополнительный запуск обновления статуса в субботу вечером для надежности
+        if: github.event.schedule == '0 17 * * 6' || github.event_name == 'workflow_dispatch'
+        env:
+          VK_TOKEN: ${{ secrets.VK_TOKEN }}
+        run: python bot.py --vk-update
+
+      - name: Save VK Members Cache
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add vk_members.json || echo "No files to add"
+          git commit -m "Update VK members cache" || echo "No changes to commit"
+          git push || echo "Nothing to push"
