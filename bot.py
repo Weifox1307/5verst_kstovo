@@ -62,6 +62,43 @@ def login_5verst():
         logger.error(f"Ошибка авторизации NRMS: {e}")
         return None
 
+# ========================= ЛОГИКА ВК СТАТУСА =========================
+async def update_vk_status():
+    """Обновляет статус группы ВК на дату следующей субботы"""
+    if not VK_TOKEN:
+        logger.error("VK_TOKEN не настроен, пропуск обновления статуса")
+        return
+
+    tz = pytz.timezone(TIMEZONE)
+    now = datetime.now(tz)
+    
+    # Ищем следующую субботу
+    # Если сегодня суббота и время > 11 утра, берем субботу через неделю
+    days_ahead = (5 - now.weekday()) % 7
+    if days_ahead == 0 and now.hour > 11:
+        days_ahead = 7
+    
+    next_sat = now + timedelta(days=days_ahead)
+    date_str = next_sat.strftime("%d.%m.%Y")
+    
+    status_text = f"Следующий старт: {date_str} в 09:00! Ждём вас в парке Юбилейный 🌳"
+    
+    try:
+        url = "https://api.vk.com/method/status.set"
+        params = {
+            "group_id": VK_GROUP_ID,
+            "text": status_text,
+            "access_token": VK_TOKEN,
+            "v": "5.131"
+        }
+        res = requests.get(url, params=params).json()
+        if "error" in res:
+            logger.error(f"Ошибка ВК API при обновлении статуса: {res['error']['error_msg']}")
+        else:
+            logger.info(f"Статус ВК успешно обновлен: {status_text}")
+    except Exception as e:
+        logger.error(f"Не удалось обновить статус ВК: {e}")
+
 # ========================= ЛОГИКА ТИТУЛОВ =========================
 async def update_titles():
     logger.info("--- СТАРТ ОБНОВЛЕНИЯ ТИТУЛОВ ---")
@@ -223,6 +260,10 @@ async def send_results():
                 await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
             with open(LOG_FILE, "w") as f: f.write(disp_date)
             git_push()
+            
+            # Сразу после успешных результатов обновляем ВК на следующую неделю
+            await update_vk_status()
+            
         except Exception as e: logger.error(f"Ошибка отправки: {e}")
 
 def git_push():
@@ -249,8 +290,6 @@ async def check_birthdays(mode="day"):
         return
 
     congrats, report_list = [], []
-    
-    # Границы текущей недели (ПН - ВС)
     monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
 
@@ -263,13 +302,11 @@ async def check_birthdays(mode="day"):
             
             if mode == "month" and m_t == now.month:
                 report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
-            
             elif mode == "day" and d_t == now.day and m_t == now.month:
                 un = str(row.get('username', '')).strip().replace('@','')
                 mention = f"@{un}" if un and un.lower() not in ["nan",""] else html.escape(name)
                 age = f" ({now.year - int(float(parts[2]))} лет)" if len(parts)==3 else ""
                 congrats.append(f"<b>{mention}</b>{age}")
-            
             elif mode == "week":
                 bd_this_year = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
                 if monday <= bd_this_year <= sunday:
@@ -282,19 +319,15 @@ async def check_birthdays(mode="day"):
             months = ["Январе", "Феврале", "Марте", "Апреле", "Мае", "Июне", "Июле", "Августе", "Сентябре", "Октябре", "Ноябре", "Декабре"]
             msg = f"🎂 <b>Именинники в {months[now.month-1]}:</b>\n\n" + "\n".join(sorted(report_list))
             await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-        
         elif mode == "week":
             if report_list:
                 msg = f"📅 <b>Дни рождения на этой неделе ({monday.strftime('%d.%m')} - {sunday.strftime('%d.%m')}):</b>\n\n" + "\n".join(sorted(report_list))
                 await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-            else:
-                logger.info("На этой неделе именинников нет.")
-        
         elif mode == "day" and congrats:
             msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats)
             await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
 
-# ========================= НОВАЯ СТАТИСТИКА И ВК =========================
+# ========================= ВК ЧЕК И СТАТИСТИКА =========================
 async def check_new_vk_members():
     if not VK_TOKEN: return
     try:
@@ -382,6 +415,7 @@ async def main():
     elif mode == "--results": await send_results()
     elif mode == "--vk-check": await check_new_vk_members()
     elif mode == "--stats": await send_weekly_stats()
+    elif mode == "--vk-update": await update_vk_status()
     elif mode == "--birthdays-auto":
         await check_birthdays("day")
         now = datetime.now(pytz.timezone(TIMEZONE))
