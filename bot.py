@@ -230,7 +230,6 @@ async def check_birthdays(mode="day"):
     monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0)
     sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59)
 
-    # Маппинг колонок по индексу (0: name, 1: username, 2: birthday)
     for _, row in df.iterrows():
         try:
             name = str(row.iloc).strip()
@@ -239,6 +238,7 @@ async def check_birthdays(mode="day"):
             if not bd_str or bd_str.lower() == 'nan': continue
             
             parts = bd_str.split('.')
+            if len(parts) < 2: continue
             d_t, m_t = int(float(parts)), int(float(parts))
 
             if mode == "month" and m_t == now.month:
@@ -247,9 +247,11 @@ async def check_birthdays(mode="day"):
                 mention = f"@{uname}" if uname and uname.lower() != "nan" else html.escape(name)
                 congrats.append(f"<b>{mention}</b>")
             elif mode == "week":
-                bd_date = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
-                if monday <= bd_date <= sunday:
-                    report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
+                try:
+                    bd_date = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
+                    if monday <= bd_date <= sunday:
+                        report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
+                except: continue
         except: continue
 
     bot = Bot(token=TOKEN)
@@ -277,16 +279,18 @@ async def check_new_vk_members():
 
 async def main():
     if len(sys.argv) < 2: return
-    arg = sys.argv
-    if arg == "--titles": await update_titles()
-    elif arg == "--results": await send_results()
-    elif arg == "--vk-check": await check_new_vk_members()
-    elif arg == "--vk-update": await update_vk_status()
-    elif "--birthdays" in arg:
+    args = sys.argv # Это список всех аргументов
+    
+    # Проверяем наличие конкретных флагов в списке аргументов
+    if "--titles" in args: await update_titles()
+    elif "--results" in args: await send_results()
+    elif "--vk-check" in args: await check_new_vk_members()
+    elif "--vk-update" in args: await update_vk_status()
+    elif "--birthdays" in args or "--birthdays-auto" in args:
         mode = "day"
-        if "week" in arg: mode = "week"
-        elif "month" in arg: mode = "month"
-        elif "auto" in arg:
+        if "week" in args: mode = "week"
+        elif "month" in args: mode = "month"
+        elif "auto" in args or "--birthdays-auto" in args:
             now = datetime.now(pytz.timezone(TIMEZONE))
             await check_birthdays("day")
             if now.day == 1: await check_birthdays("month")
