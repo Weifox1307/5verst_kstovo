@@ -65,7 +65,7 @@ def parse_flexible_date(date_str):
         parts = [p for p in clean.split('.') if p.strip().isdigit()]
         
         if len(parts) >= 2:
-            # Берем первые два элемента и превращаем в числа
+            # ИСПРАВЛЕНО: Берем конкретные индексы элементов списка
             day = int(parts)
             month = int(parts)
             if 1 <= day <= 31 and 1 <= month <= 12:
@@ -102,7 +102,7 @@ async def update_vk_status():
     end_ts = int(next_sat.replace(hour=10, minute=0, second=0, microsecond=0).timestamp())
     try:
         requests.get("https://api.vk.com/method/status.set", 
-                     params={"group_id": VK_GROUP_ID, "text": status_text, "access_token": VK_TOKEN, "v": "5.131"})
+                      params={"group_id": VK_GROUP_ID, "text": status_text, "access_token": VK_TOKEN, "v": "5.131"})
         edit_params = {
             "group_id": VK_GROUP_ID,
             "event_start_date": start_ts,
@@ -208,7 +208,8 @@ def get_vk_photo(display_date, run_num):
         if target:
             album_url = f"https://vk.com/album-{VK_GROUP_ID}_{target['id']}"
             p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
-            photos = requests.get("https://api.vk.com/method/photos.get", params=p_img).json().get("response", {}).get("items", [])
+            photos_resp = requests.get("https://api.vk.com/method/photos.get", params=p_img).json()
+            photos = photos_resp.get("response", {}).get("items", [])
             if photos:
                 sizes = photos.get("sizes", [])
                 best_size = sorted(sizes, key=lambda x: x['width'])[-1]['url']
