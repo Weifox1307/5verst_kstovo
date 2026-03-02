@@ -53,7 +53,7 @@ def parse_flexible_date(date_str):
     if not date_str or str(date_str).lower() == 'nan':
         return None, None
     try:
-        # Очищаем строку, оставляя только цифры и разделители
+        # Очищаем строку от лишних символов
         clean = re.sub(r'[^0-9./-]', '.', str(date_str).strip())
         clean = clean.replace('/', '.').replace('-', '.')
         parts = [p for p in clean.split('.') if p.strip().isdigit()]
@@ -63,7 +63,7 @@ def parse_flexible_date(date_str):
             if 1 <= day <= 31 and 1 <= month <= 12:
                 return day, month
     except Exception as e:
-        print(f"Ошибка парсинга даты '{date_str}': {e}")
+        print(f"DEBUG Error parsing date '{date_str}': {e}")
     return None, None
 
 def login_5verst():
@@ -79,11 +79,9 @@ def login_5verst():
         logger.error(f"Ошибка авторизации NRMS: {e}")
         return None
 
-# ========================= ЛОГИКА ВК (СТАТУС И ДАТА) =========================
+# ========================= ЛОГИКА ВК =========================
 async def update_vk_status():
-    if not VK_TOKEN:
-        logger.error("VK_TOKEN не настроен")
-        return
+    if not VK_TOKEN: return
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
     days_ahead = (5 - now.weekday()) % 7
@@ -104,17 +102,14 @@ async def update_vk_status():
             "access_token": VK_TOKEN,
             "v": "5.131"
         }
-        res_edit = requests.get("https://api.vk.com/method/groups.edit", params=edit_params).json()
-        if "error" in res_edit:
-            logger.error(f"Ошибка обновления даты ВК: {res_edit['error']['error_msg']}")
-        else:
-            logger.info(f"Дата мероприятия ВК обновлена на {date_str}")
+        requests.get("https://api.vk.com/method/groups.edit", params=edit_params)
+        logger.info(f"Статус ВК обновлен на {date_str}")
     except Exception as e:
-        logger.error(f"Ошибка ВК API: {e}")
+        logger.error(f"Ошибка ВК: {e}")
 
 # ========================= ЛОГИКА ТИТУЛОВ =========================
 async def update_titles():
-    logger.info("--- ОБНОВЛЕНИЕ ТИТУЛОВ ---")
+    print("DEBUG: Запуск обновления титулов")
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             cache = json.load(f)
@@ -140,8 +135,10 @@ async def update_titles():
                 if str(TARGET_CHAT_ID) not in cache: cache[str(TARGET_CHAT_ID)] = {}
                 cache[str(TARGET_CHAT_ID)][str(f_tg_id)] = int(f_v5_id)
     except Exception as e: logger.error(f"Ошибка формы: {e}")
+    
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2, ensure_ascii=False)
+    
     headers = login_5verst()
     if not headers: return
     bot = Bot(token=TOKEN)
@@ -184,8 +181,7 @@ def get_results_data(date_str):
                 h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
                 match = re.search(r'(?:№|#|старта)\s*(\d+)', h1_text, re.IGNORECASE)
                 return real_finishers, url, match.group(1) if match else None
-    except Exception as e:
-        logger.error(f"Ошибка парсинга {url}: {e}")
+    except: pass
     return 0, url, None
 
 def get_vk_photo(display_date, run_num):
@@ -204,8 +200,7 @@ def get_vk_photo(display_date, run_num):
         if target:
             album_url = f"https://vk.com/album-{VK_GROUP_ID}_{target['id']}"
             p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
-            photos_resp = requests.get("https://api.vk.com/method/photos.get", params=p_img).json()
-            photos = photos_resp.get("response", {}).get("items", [])
+            photos = requests.get("https://api.vk.com/method/photos.get", params=p_img).json().get("response", {}).get("items", [])
             if photos:
                 return album_url, sorted(photos.get("sizes", []), key=lambda x: x['width'])[-1]['url']
     except: pass
@@ -250,7 +245,7 @@ async def send_results():
             with open(LOG_FILE, "w") as f: f.write(disp_date)
             git_push()
             await update_vk_status()
-        except Exception as e: logger.error(f"Ошибка отправки результатов: {e}")
+        except Exception as e: logger.error(f"Ошибка отправки: {e}")
 
 def git_push():
     try:
@@ -263,21 +258,17 @@ def git_push():
 
 # ========================= ДНИ РОЖДЕНИЯ =========================
 async def check_birthdays(mode="day"):
-    print(f"DEBUG: Запуск check_birthdays, mode={mode}")
-    if not SHEET_BIRTHDAYS_URL:
-        print("DEBUG: SHEET_BIRTHDAYS_URL не задан")
-        return
-    
+    print(f"DEBUG: Запуск check_birthdays ({mode})")
+    if not SHEET_BIRTHDAYS_URL: return
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
-    
     try:
         res = requests.get(SHEET_BIRTHDAYS_URL, timeout=30)
         res.encoding = 'utf-8'
         df = pd.read_csv(StringIO(res.text)).fillna("")
-        print(f"DEBUG: Таблица загружена, строк: {len(df)}")
+        print(f"DEBUG: Прочитано строк таблицы: {len(df)}")
     except Exception as e:
-        print(f"DEBUG: Ошибка загрузки таблицы: {e}")
+        print(f"DEBUG Error loading sheet: {e}")
         return
 
     congrats, report_list = [], []
@@ -286,7 +277,6 @@ async def check_birthdays(mode="day"):
     
     for i, row in df.iterrows():
         try:
-            # Прямое обращение по индексам колонок: 0-Имя, 1-Username, 2-Дата
             name = str(row.iloc).strip()
             username = str(row.iloc).strip()
             bd_val = str(row.iloc).strip()
@@ -300,16 +290,13 @@ async def check_birthdays(mode="day"):
                 un = username.replace('@','')
                 mention = f"@{un}" if un and un.lower() not in ["nan",""] else html.escape(name)
                 congrats.append(f"<b>{mention}</b>")
-                print(f"DEBUG: Сегодня ДР у {name}")
             elif mode == "week":
                 try:
-                    bd_this_year = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
-                    if monday <= bd_this_year <= sunday:
+                    bd_year = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
+                    if monday <= bd_year <= sunday:
                         report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
                 except: pass
-        except Exception as e:
-            print(f"DEBUG: Ошибка в строке {i}: {e}")
-            continue
+        except: continue
         
     bot = Bot(token=TOKEN)
     async with bot:
@@ -323,9 +310,9 @@ async def check_birthdays(mode="day"):
         
         if text:
             await bot.send_message(int(TARGET_CHAT_ID), text=text, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-            print("DEBUG: Сообщение отправлено!")
+            print(f"DEBUG: Сообщение отправлено в Telegram (mode={mode})")
         else:
-            print("DEBUG: Именинников не найдено.")
+            print(f"DEBUG: Именинников не найдено (mode={mode})")
 
 # ========================= ВК МОНИТОРИНГ =========================
 async def check_new_vk_members():
@@ -376,14 +363,16 @@ async def send_weekly_stats():
                f"🧡 Увидимся на 5 вёрст 🧡!")
         if ORGS_CHAT_ID:
             try: await bot.send_message(int(ORGS_CHAT_ID), text=msg, parse_mode=ParseMode.HTML)
-            except Exception as e: logger.error(f"Ошибка в ORGS_CHAT_ID: {e}")
+            except: pass
 
+# ========================= MAIN =========================
 async def main():
-    if len(sys.argv) < 2: 
-        print("DEBUG: Нет аргументов запуска")
-        return
+    if len(sys.argv) < 2: return
+    
+    # Исправленное получение флага
     m = sys.argv
-    print(f"DEBUG: Выбран аргумент: {m}")
+    print(f"DEBUG: Аргумент принят: {m}")
+    
     if m == "--titles": await update_titles()
     elif m == "--birthdays": await check_birthdays("day")
     elif m == "--results": await send_results()
@@ -391,16 +380,12 @@ async def main():
     elif m == "--stats": await send_weekly_stats()
     elif m == "--vk-update": await update_vk_status()
     elif m == "--birthdays-auto":
-        print("DEBUG: Запуск автоматического режима ДР")
+        print("DEBUG: Режим birthdays-auto")
         await check_birthdays("day")
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
-        if now.day == 1: 
-            print("DEBUG: Первое число месяца - запуск отчета месяца")
-            await check_birthdays("month")
-        if now.weekday() == 0: 
-            print("DEBUG: Понедельник - запуск отчета недели")
-            await check_birthdays("week")
+        if now.day == 1: await check_birthdays("month")
+        if now.weekday() == 0: await check_birthdays("week")
 
 if __name__ == "__main__":
     asyncio.run(main())
