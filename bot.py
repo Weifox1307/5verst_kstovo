@@ -52,17 +52,18 @@ def parse_flexible_date(date_str):
     """Извлекает день и месяц из любого формата (05.03, 5/3/1990 и т.д.)"""
     if not date_str or str(date_str).lower() == 'nan':
         return None, None
-    # Очищаем строку, оставляя только цифры и разделители
-    clean = re.sub(r'[^0-9./-]', '.', str(date_str).strip())
-    clean = clean.replace('/', '.').replace('-', '.')
-    parts = [p for p in clean.split('.') if p.strip().isdigit()]
-    if len(parts) >= 2:
-        try:
+    try:
+        # Очищаем строку, оставляя только цифры и разделители
+        clean = re.sub(r'[^0-9./-]', '.', str(date_str).strip())
+        clean = clean.replace('/', '.').replace('-', '.')
+        parts = [p for p in clean.split('.') if p.strip().isdigit()]
+        if len(parts) >= 2:
             day = int(parts)
             month = int(parts)
             if 1 <= day <= 31 and 1 <= month <= 12:
                 return day, month
-        except: pass
+    except Exception as e:
+        print(f"Ошибка парсинга даты '{date_str}': {e}")
     return None, None
 
 def login_5verst():
@@ -125,7 +126,7 @@ async def update_titles():
         res_base.encoding = 'utf-8'
         df_base = pd.read_csv(StringIO(res_base.text))
         for _, row in df_base.iterrows():
-            tg_id = extract_id(row.iloc) # Исправлено: добавлен индекс
+            tg_id = extract_id(row.iloc)
             if tg_id: valid_chat_members.add(str(tg_id))
     except Exception as e: logger.error(f"Ошибка Sheet1: {e}")
     try:
@@ -133,8 +134,8 @@ async def update_titles():
         res_form.encoding = 'utf-8'
         df_form = pd.read_csv(StringIO(res_form.text))
         for _, row in df_form.iterrows():
-            f_tg_id = extract_id(row.iloc) # Исправлено: добавлен индекс
-            f_v5_id = extract_id(row.iloc) # Исправлено: добавлен индекс
+            f_tg_id = extract_id(row.iloc)
+            f_v5_id = extract_id(row.iloc)
             if f_tg_id and f_v5_id and f_tg_id in valid_chat_members:
                 if str(TARGET_CHAT_ID) not in cache: cache[str(TARGET_CHAT_ID)] = {}
                 cache[str(TARGET_CHAT_ID)][str(f_tg_id)] = int(f_v5_id)
@@ -177,7 +178,7 @@ def get_results_data(date_str):
             real_finishers = 0
             for row in rows:
                 cells = row.find_all("td")
-                if cells and cells.get_text(strip=True).isdigit(): # Исправлено cells -> cells
+                if cells and cells.get_text(strip=True).isdigit():
                     real_finishers += 1
             if real_finishers > 0:
                 h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
@@ -199,7 +200,7 @@ def get_vk_photo(display_date, run_num):
         target = next((a for a in albums if date_pattern in re.sub(r'\D', '', a.get('title', ''))), None)
         if not target and run_num:
             target = next((a for a in albums if f"#{run_num}" in a.get('title', '')), None)
-        if not target and albums: target = albums # Исправлено
+        if not target and albums: target = albums
         if target:
             album_url = f"https://vk.com/album-{VK_GROUP_ID}_{target['id']}"
             p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
@@ -262,25 +263,33 @@ def git_push():
 
 # ========================= ДНИ РОЖДЕНИЯ =========================
 async def check_birthdays(mode="day"):
-    if not SHEET_BIRTHDAYS_URL: return
+    print(f"DEBUG: Запуск check_birthdays, mode={mode}")
+    if not SHEET_BIRTHDAYS_URL:
+        print("DEBUG: SHEET_BIRTHDAYS_URL не задан")
+        return
+    
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
+    
     try:
         res = requests.get(SHEET_BIRTHDAYS_URL, timeout=30)
         res.encoding = 'utf-8'
         df = pd.read_csv(StringIO(res.text)).fillna("")
+        print(f"DEBUG: Таблица загружена, строк: {len(df)}")
     except Exception as e:
-        logger.error(f"Ошибка загрузки таблицы ДР: {e}")
+        print(f"DEBUG: Ошибка загрузки таблицы: {e}")
         return
+
     congrats, report_list = [], []
     monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
     
-    for _, row in df.iterrows():
+    for i, row in df.iterrows():
         try:
-            name = str(row.iloc).strip() # Имя
-            username = str(row.iloc).strip() # TG Username
-            bd_val = str(row.iloc).strip() # Дата
+            # Прямое обращение по индексам колонок: 0-Имя, 1-Username, 2-Дата
+            name = str(row.iloc).strip()
+            username = str(row.iloc).strip()
+            bd_val = str(row.iloc).strip()
             
             d_t, m_t = parse_flexible_date(bd_val)
             if d_t is None: continue
@@ -291,20 +300,32 @@ async def check_birthdays(mode="day"):
                 un = username.replace('@','')
                 mention = f"@{un}" if un and un.lower() not in ["nan",""] else html.escape(name)
                 congrats.append(f"<b>{mention}</b>")
+                print(f"DEBUG: Сегодня ДР у {name}")
             elif mode == "week":
-                bd_this_year = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
-                if monday <= bd_this_year <= sunday:
-                    report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
-        except: continue
+                try:
+                    bd_this_year = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
+                    if monday <= bd_this_year <= sunday:
+                        report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
+                except: pass
+        except Exception as e:
+            print(f"DEBUG: Ошибка в строке {i}: {e}")
+            continue
         
     bot = Bot(token=TOKEN)
     async with bot:
+        text = ""
         if mode == "month" and report_list:
-            await bot.send_message(int(TARGET_CHAT_ID), text=f"🎂 <b>Именинники месяца:</b>\n\n"+"\n".join(sorted(report_list)), parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            text = f"🎂 <b>Именинники месяца:</b>\n\n" + "\n".join(sorted(report_list))
         elif mode == "week" and report_list:
-            await bot.send_message(int(TARGET_CHAT_ID), text=f"📅 <b>Дни рождения на неделе:</b>\n\n"+"\n".join(sorted(report_list)), parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            text = f"📅 <b>Дни рождения на неделе:</b>\n\n" + "\n".join(sorted(report_list))
         elif mode == "day" and congrats:
-            await bot.send_message(int(TARGET_CHAT_ID), text=f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n"+"\n".join(congrats), parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            text = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats) + "\n\nПоздравляем! 🎉"
+        
+        if text:
+            await bot.send_message(int(TARGET_CHAT_ID), text=text, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            print("DEBUG: Сообщение отправлено!")
+        else:
+            print("DEBUG: Именинников не найдено.")
 
 # ========================= ВК МОНИТОРИНГ =========================
 async def check_new_vk_members():
@@ -358,8 +379,11 @@ async def send_weekly_stats():
             except Exception as e: logger.error(f"Ошибка в ORGS_CHAT_ID: {e}")
 
 async def main():
-    if len(sys.argv) < 2: return
-    m = sys.argv # Исправлено: берем первый аргумент
+    if len(sys.argv) < 2: 
+        print("DEBUG: Нет аргументов запуска")
+        return
+    m = sys.argv
+    print(f"DEBUG: Выбран аргумент: {m}")
     if m == "--titles": await update_titles()
     elif m == "--birthdays": await check_birthdays("day")
     elif m == "--results": await send_results()
@@ -367,9 +391,16 @@ async def main():
     elif m == "--stats": await send_weekly_stats()
     elif m == "--vk-update": await update_vk_status()
     elif m == "--birthdays-auto":
+        print("DEBUG: Запуск автоматического режима ДР")
         await check_birthdays("day")
-        if datetime.now(pytz.timezone(TIMEZONE)).day == 1: await check_birthdays("month")
-        if datetime.now(pytz.timezone(TIMEZONE)).weekday() == 0: await check_birthdays("week")
+        tz = pytz.timezone(TIMEZONE)
+        now = datetime.now(tz)
+        if now.day == 1: 
+            print("DEBUG: Первое число месяца - запуск отчета месяца")
+            await check_birthdays("month")
+        if now.weekday() == 0: 
+            print("DEBUG: Понедельник - запуск отчета недели")
+            await check_birthdays("week")
 
 if __name__ == "__main__":
     asyncio.run(main())
