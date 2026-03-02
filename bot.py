@@ -49,20 +49,25 @@ def extract_id(input_str):
     return digits if digits else None
 
 def parse_flexible_date(date_str):
-    """Извлекает день и месяц из любого формата (05.03, 5/3/1990 и т.д.)"""
+    """Извлекает день и месяц из любого формата. Устойчива к ошибкам типов."""
     if not date_str or str(date_str).lower() == 'nan':
         return None, None
     try:
-        # Очищаем строку от лишних символов, оставляем только цифры и разделители
-        clean = re.sub(r'[^0-9./-]', '.', str(date_str).strip())
+        s = str(date_str).strip()
+        # Если строка почему-то пришла в виде "['16', '01']", вычищаем лишние символы
+        s = s.replace('[', '').replace(']', '').replace("'", "").replace('"', '')
+        
+        # Оставляем только цифры и точки/слэши
+        clean = re.sub(r'[^0-9./-]', '.', s)
         clean = clean.replace('/', '.').replace('-', '.')
-        # Разбиваем и фильтруем пустые части
+        
+        # Получаем только числовые части
         parts = [p for p in clean.split('.') if p.strip().isdigit()]
         
         if len(parts) >= 2:
-            # СТРОГОЕ ИСПРАВЛЕНИЕ: преобразуем элементы по отдельности
-            day = int(str(parts))
-            month = int(str(parts))
+            # Берем первые два элемента и превращаем в числа
+            day = int(parts)
+            month = int(parts)
             if 1 <= day <= 31 and 1 <= month <= 12:
                 return day, month
     except Exception as e:
@@ -124,7 +129,6 @@ async def update_titles():
         res_base.encoding = 'utf-8'
         df_base = pd.read_csv(StringIO(res_base.text))
         for i in range(len(df_base)):
-            # Используем .iat для доступа к 1-й колонке (TG ID)
             tg_id = extract_id(df_base.iat[i, 0])
             if tg_id: valid_chat_members.add(str(tg_id))
     except Exception as e: logger.error(f"Ошибка Sheet1: {e}")
@@ -133,7 +137,6 @@ async def update_titles():
         res_form.encoding = 'utf-8'
         df_form = pd.read_csv(StringIO(res_form.text))
         for i in range(len(df_form)):
-            # iat[i, 1] - TG ID, iat[i, 2] - V5 ID (настроить под структуру таблицы)
             f_tg_id = extract_id(df_form.iat[i, 1])
             f_v5_id = extract_id(df_form.iat[i, 2])
             if f_tg_id and f_v5_id and f_tg_id in valid_chat_members:
@@ -205,11 +208,10 @@ def get_vk_photo(display_date, run_num):
         if target:
             album_url = f"https://vk.com/album-{VK_GROUP_ID}_{target['id']}"
             p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
-            r_img = requests.get("https://api.vk.com/method/photos.get", params=p_img).json()
-            photos = r_img.get("response", {}).get("items", [])
+            photos = requests.get("https://api.vk.com/method/photos.get", params=p_img).json().get("response", {}).get("items", [])
             if photos:
-                # Берем самое большое разрешение
-                best_size = sorted(photos.get("sizes", []), key=lambda x: x['width'])[-1]['url']
+                sizes = photos.get("sizes", [])
+                best_size = sorted(sizes, key=lambda x: x['width'])[-1]['url']
                 return album_url, best_size
     except: pass
     return album_url, None
@@ -285,7 +287,6 @@ async def check_birthdays(mode="day"):
     
     for i in range(len(df)):
         try:
-            # Используем .iat[строка, колонка] для безопасности
             name = str(df.iat[i, 0]).strip()
             username = str(df.iat[i, 1]).strip()
             bd_val = str(df.iat[i, 2]).strip()
@@ -301,8 +302,9 @@ async def check_birthdays(mode="day"):
                 congrats.append(f"<b>{mention}</b>")
             elif mode == "week":
                 try:
-                    bd_date_current = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
-                    if monday <= bd_date_current <= sunday:
+                    # Создаем дату для текущего года
+                    bd_this_year = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
+                    if monday <= bd_this_year <= sunday:
                         report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
                 except: pass
         except: continue
