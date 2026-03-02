@@ -369,17 +369,17 @@ async def send_weekly_stats():
 async def main():
     if len(sys.argv) < 2: return
     
-    # Исправленное получение флага
-    m = sys.argv
-    print(f"DEBUG: Аргумент принят: {m}")
+    # Прямое чтение флага из списка аргументов
+    arg_list = sys.argv
+    print(f"DEBUG: Аргумент принят: {arg_list}")
     
-    if m == "--titles": await update_titles()
-    elif m == "--birthdays": await check_birthdays("day")
-    elif m == "--results": await send_results()
-    elif m == "--vk-check": await check_new_vk_members()
-    elif m == "--stats": await send_weekly_stats()
-    elif m == "--vk-update": await update_vk_status()
-    elif m == "--birthdays-auto":
+    if "--titles" in arg_list: await update_titles()
+    elif "--birthdays" in arg_list: await check_birthdays("day")
+    elif "--results" in arg_list: await send_results()
+    elif "--vk-check" in arg_list: await check_new_vk_members()
+    elif "--stats" in arg_list: await send_weekly_stats()
+    elif "--vk-update" in arg_list: await update_vk_status()
+    elif "--birthdays-auto" in arg_list:
         print("DEBUG: Режим birthdays-auto")
         await check_birthdays("day")
         tz = pytz.timezone(TIMEZONE)
