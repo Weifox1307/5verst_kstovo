@@ -385,6 +385,7 @@ async def check_birthdays(mode="day"):
         try:
             name = str(row.get('name', '')).strip()
             bd_val = str(row.get('birthday', '')).strip().replace('/', '.').replace('-', '.')
+            un = str(row.get('username', '')).strip().replace('@', '')
 
             if not name or not bd_val or '.' not in bd_val:
                 continue
@@ -396,21 +397,25 @@ async def check_birthdays(mode="day"):
             d_t = int(float(parts[0]))
             m_t = int(float(parts[1]))
 
+            # Единая логика упоминания
+            if un and un.lower() not in ["nan", ""]:
+                mention = f"@{un}"
+            else:
+                mention = name
+
             if mode == "month" and m_t == now.month:
-                report_list.append(f"• {d_t:02d}.{m_t:02d} — {name}")
+                report_list.append(f"• {d_t:02d}.{m_t:02d} — <b>{mention}</b>")
 
             elif mode == "day" and d_t == now.day and m_t == now.month:
-                un = str(row.get('username', '')).strip().replace('@', '')
-                mention = f"@{un}" if un and un.lower() not in ["nan", ""] else name
                 congrats.append(f"<b>{mention}</b>")
 
             elif mode == "week":
                 try:
                     bd_this_year = datetime(now.year, m_t, d_t, tzinfo=tz)
                     if monday <= bd_this_year <= sunday:
-                        report_list.append(f"• {d_t:02d}.{m_t:02d} — {name}")
+                        report_list.append(f"• {d_t:02d}.{m_t:02d} — <b>{mention}</b>")
                 except ValueError:
-                    continue  # некорректная дата (например 29.02)
+                    continue
         except:
             continue
 
