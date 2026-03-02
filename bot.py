@@ -61,47 +61,29 @@ def login_5verst():
         logger.error(f"Ошибка авторизации NRMS: {e}")
         return None
 
-# ========================= ЛОГИКА ВК (СТАТУС И ДАТА) =========================
+# ========================= ЛОГИКА ВК =========================
 async def update_vk_status():
     if not VK_TOKEN:
         logger.error("VK_TOKEN не настроен")
         return
-
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
-    
     days_ahead = (5 - now.weekday()) % 7
     if days_ahead == 0 and now.hour > 11:
         days_ahead = 7
-    
     next_sat = now + timedelta(days=days_ahead)
     date_str = next_sat.strftime("%d.%m.%Y")
-    
     status_text = f"Следующий старт: {date_str} в 09:00! Ждём вас в парке Юбилейный 🌳"
-    
     start_ts = int(next_sat.replace(hour=8, minute=40, second=0, microsecond=0).timestamp())
     end_ts = int(next_sat.replace(hour=10, minute=0, second=0, microsecond=0).timestamp())
-    
     try:
         requests.get("https://api.vk.com/method/status.set", 
                      params={"group_id": VK_GROUP_ID, "text": status_text, "access_token": VK_TOKEN, "v": "5.131"})
-        
-        edit_params = {
-            "group_id": VK_GROUP_ID,
-            "event_start_date": start_ts,
-            "event_finish_date": end_ts,
-            "access_token": VK_TOKEN,
-            "v": "5.131"
-        }
-        res_edit = requests.get("https://api.vk.com/method/groups.edit", params=edit_params).json()
-        
-        if "error" in res_edit:
-            logger.error(f"Ошибка обновления даты ВК: {res_edit['error']['error_msg']}")
-        else:
-            logger.info(f"Дата мероприятия ВК обновлена на {date_str} (08:40 - 10:00)")
-            
+        edit_params = {"group_id": VK_GROUP_ID, "event_start_date": start_ts, "event_finish_date": end_ts, "access_token": VK_TOKEN, "v": "5.131"}
+        requests.get("https://api.vk.com/method/groups.edit", params=edit_params)
+        logger.info(f"Статус ВК обновлен на {date_str}")
     except Exception as e:
-        logger.error(f"Ошибка ВК API: {e}")
+        logger.error(f"Ошибка ВК: {e}")
 
 # ========================= ЛОГИКА ТИТУЛОВ =========================
 async def update_titles():
@@ -115,7 +97,6 @@ async def update_titles():
     valid_chat_members = set()
     try:
         res_base = requests.get(SHEET_BASE_URL, timeout=20)
-        res_base.encoding = 'utf-8'
         df_base = pd.read_csv(StringIO(res_base.text))
         for _, row in df_base.iterrows():
             tg_id = extract_id(row.iloc)
@@ -124,7 +105,6 @@ async def update_titles():
 
     try:
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
-        res_form.encoding = 'utf-8'
         df_form = pd.read_csv(StringIO(res_form.text))
         for _, row in df_form.iterrows():
             f_tg_id = extract_id(row.iloc)
@@ -139,7 +119,6 @@ async def update_titles():
 
     headers = login_5verst()
     if not headers: return
-
     bot = Bot(token=TOKEN)
     async with bot:
         for tg_id, v5_id in cache.get(str(TARGET_CHAT_ID), {}).items():
@@ -153,272 +132,167 @@ async def update_titles():
                 vol = {"vol500":"500","vol250":"250","vol100":"100","vol50":"50","vol25":"25","vol10":"10"}.get(m.get("volunteer"), "")
                 badges = [b for b in [run, vol] if b]
                 title = f"Клуб {'|'.join(badges)}" if badges else "Новичок"
-                uid = int(tg_id)
                 try:
-                    await bot.promote_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=uid, can_manage_chat=True, can_invite_users=True)
+                    await bot.promote_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=int(tg_id), can_manage_chat=True)
                 except: pass
-                await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
+                await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=int(tg_id), custom_title=title)
                 await asyncio.sleep(0.8)
-            except Exception as e: logger.warning(f"Ошибка для {tg_id}: {e}")
+            except Exception as e: logger.warning(f"Ошибка титула {tg_id}: {e}")
 
 # ========================= ЛОГИКА РЕЗУЛЬТАТОВ =========================
 def get_results_data(date_str):
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
     url = f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/"
-    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        response = requests.get(url, timeout=20, headers=headers)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
+        r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'html.parser')
             rows = soup.select("table.sortable tbody tr")
-            real_finishers = 0
-            for row in rows:
-                cells = row.find_all("td")
-                if cells and cells.get_text(strip=True).isdigit():
-                    real_finishers += 1
-            if real_finishers > 0:
-                h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
-                match = re.search(r'(?:№|#|старта)\s*(\d+)', h1_text, re.IGNORECASE)
-                return real_finishers, url, match.group(1) if match else None
-    except Exception as e:
-        logger.error(f"Ошибка парсинга {url}: {e}")
+            count = sum(1 for row in rows if row.find_all("td") and row.find_all("td").get_text(strip=True).isdigit())
+            h1 = soup.find('h1').get_text() if soup.find('h1') else ""
+            match = re.search(r'(?:№|#|старта)\s*(\d+)', h1, re.IGNORECASE)
+            return count, url, match.group(1) if match else None
+    except: pass
     return 0, url, None
 
 def get_vk_photo(display_date, run_num):
-    album_url = f"https://vk.com/albums-{VK_GROUP_ID}"
-    if not VK_TOKEN: return album_url, None
+    if not VK_TOKEN: return f"https://vk.com/albums-{VK_GROUP_ID}", None
     try:
-        day, month, _ = display_date.split('.')
+        day, month = display_date.split('.')[:2]
         date_pattern = f"{day}{month}"
-        p = {"owner_id": -VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131"}
-        resp = requests.get("https://api.vk.com/method/photos.getAlbums", params=p).json()
+        resp = requests.get("https://api.vk.com/method/photos.getAlbums", params={"owner_id": -VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131"}).json()
         albums = resp.get("response", {}).get("items", [])
         target = next((a for a in albums if date_pattern in re.sub(r'\D', '', a.get('title', ''))), None)
-        if not target and run_num:
-            target = next((a for a in albums if f"#{run_num}" in a.get('title', '')), None)
+        if not target and run_num: target = next((a for a in albums if f"#{run_num}" in a.get('title', '')), None)
         if not target and albums: target = albums
         if target:
             album_url = f"https://vk.com/album-{VK_GROUP_ID}_{target['id']}"
-            p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
-            photos = requests.get("https://api.vk.com/method/photos.get", params=p_img).json().get("response", {}).get("items", [])
-            if photos:
-                return album_url, sorted(photos.get("sizes", []), key=lambda x: x['width'])[-1]['url']
+            photos = requests.get("https://api.vk.com/method/photos.get", params={"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}).json()
+            items = photos.get("response", {}).get("items", [])
+            if items: return album_url, sorted(items.get("sizes", []), key=lambda x: x['width'])[-1]['url']
     except: pass
-    return album_url, None
+    return f"https://vk.com/albums-{VK_GROUP_ID}", None
 
 async def send_results():
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
-    offset = (now.weekday() - 5) % 7
-    last_sat = now - timedelta(days=offset)
+    last_sat = now - timedelta(days=(now.weekday() - 5) % 7)
     date_str, disp_date = last_sat.strftime("%Y-%m-%d"), last_sat.strftime("%d.%m.%Y")
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, "r") as f:
             if f.read().strip() == disp_date: return
     count, web_url, run_num = get_results_data(date_str)
     if count == 0: return
+    
+    v_text = ""
     headers = login_5verst()
-    vols_text, v_count_unique = "", 0
     if headers:
         try:
-            r = requests.post("https://nrms.5verst.ru/api/v1/event/volunteer/list", 
-                              json={"event_id": EVENT_ID, "event_date": disp_date}, headers=headers)
-            v_list = r.json().get("result", {}).get("volunteer_list", [])
+            rv = requests.post("https://nrms.5verst.ru/api/v1/event/volunteer/list", json={"event_id": EVENT_ID, "event_date": disp_date}, headers=headers).json()
+            v_list = rv.get("result", {}).get("volunteer_list", [])
             if v_list:
                 vols = {}
-                for v in v_list:
-                    n, rn = v.get("full_name"), v.get("role_name")
-                    vols[n] = vols.get(n, []) + [rn]
-                v_count_unique = len(vols) 
-                vols_text = f"\n🧡 <b>Команда героев ({v_count_unique}):</b>\n" + \
-                            "\n".join([f"• <b>{name}</b> — <i>{', '.join(roles)}</i>" for name, roles in vols.items()])
+                for v in v_list: vols[v['full_name']] = vols.get(v['full_name'], []) + [v['role_name']]
+                v_text = f"\n🧡 <b>Герои ({len(vols)}):</b>\n" + "\n".join([f"• <b>{k}</b> — <i>{', '.join(v)}</i>" for k,v in vols.items()])
         except: pass
-    alb_url, img_url = get_vk_photo(disp_date, run_num)
-    msg = (f"🌳 <b>5 вёрст парк Юбилейный | Кстово</b>\n🗓 <b>Старт от {disp_date}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n🏁 Финишировало: <b>{count}</b>\n{vols_text}\n\n"
-            f"📊 <a href='{web_url}'>Протокол</a>\n📸 <a href='{alb_url}'>Фотографии</a>")
+
+    alb_url, img = get_vk_photo(disp_date, run_num)
+    msg = (f"🌳 <b>5 вёрст Юбилейный | Кстово</b>\n🗓 <b>Старт {disp_date}</b>\n━━━━━━━━━━━━━━\n🏁 Финишировало: <b>{count}</b>\n{v_text}\n\n📊 <a href='{web_url}'>Протокол</a>\n📸 <a href='{alb_url}'>Фото</a>")
     bot = Bot(token=TOKEN)
     async with bot:
-        try:
-            if img_url: await bot.send_photo(int(TARGET_CHAT_ID), photo=img_url, caption=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-            else: await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-            with open(LOG_FILE, "w") as f: f.write(disp_date)
-            git_push()
-            await update_vk_status()
-        except Exception as e: logger.error(f"Ошибка отправки: {e}")
+        if img: await bot.send_photo(int(TARGET_CHAT_ID), photo=img, caption=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+        else: await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+        with open(LOG_FILE, "w") as f: f.write(disp_date)
+        git_push()
+        await update_vk_status()
 
 def git_push():
     try:
-        subprocess.run(["git", "config", "user.name", "GitHub Action Bot"])
-        subprocess.run(["git", "config", "user.email", "actions@github.com"])
-        subprocess.run(["git", "add", LOG_FILE, VK_MEMBERS_FILE])
-        subprocess.run(["git", "commit", "-m", "Auto: Sync logs"])
-        subprocess.run(["git", "push"])
+        subprocess.run(["git", "config", "user.name", "Action Bot"], check=False)
+        subprocess.run(["git", "config", "user.email", "bot@github.com"], check=False)
+        subprocess.run(["git", "add", LOG_FILE, VK_MEMBERS_FILE], check=False)
+        subprocess.run(["git", "commit", "-m", "Sync"], check=False)
+        subprocess.run(["git", "push"], check=False)
     except: pass
 
 # ========================= ДНИ РОЖДЕНИЯ =========================
 async def check_birthdays(mode="day"):
-    print(f"\n[DEBUG] Запуск check_birthdays с режимом: {mode}")
-    if not SHEET_BIRTHDAYS_URL:
-        print("[DEBUG] Ошибка: SHEET_BIRTHDAYS_URL не задан!")
-        return
-    
+    print(f"[DEBUG] Режим: {mode}")
+    if not SHEET_BIRTHDAYS_URL: return
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
-    print(f"[DEBUG] Текущее время (МСК): {now.strftime('%d.%m.%Y %H:%M')}")
-
     try:
-        print(f"[DEBUG] Загрузка таблицы по URL: {SHEET_BIRTHDAYS_URL[:50]}...")
-        res = requests.get(SHEET_BIRTHDAYS_URL, timeout=30)
-        res.encoding = 'utf-8'
+        res = requests.get(SHEET_BIRTHDAYS_URL)
         df = pd.read_csv(StringIO(res.text)).fillna("")
-        print(f"[DEBUG] Таблица загружена. Названия колонок: {list(df.columns)}")
-    except Exception as e:
-        print(f"[DEBUG] Ошибка загрузки CSV: {e}")
-        return
+    except Exception as e: print(f"Ошибка таблицы: {e}"); return
 
     congrats, report_list = [], []
-    
-    # Определяем границы недели (Пн-Вс)
-    monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-    sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
-    
-    if mode == "week":
-        print(f"[DEBUG] Ищем ДР в интервале: {monday.strftime('%d.%m')} - {sunday.strftime('%d.%m')}")
+    monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0)
+    sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59)
 
-    # Пытаемся найти нужные колонки вне зависимости от регистра
-    col_map = {col.lower(): col for col in df.columns}
-    name_col = col_map.get('name', df.columns)
-    bd_col = col_map.get('birthday', df.columns if len(df.columns)>2 else df.columns[-1])
-    user_col = col_map.get('username', df.columns if len(df.columns)>1 else None)
-
-    for index, row in df.iterrows():
+    # Маппинг колонок по индексу (0: name, 1: username, 2: birthday)
+    for _, row in df.iterrows():
         try:
-            name = str(row[name_col]).strip()
-            bd_str = str(row[bd_col]).strip().replace('/', '.').replace('-', '.')
-            
+            name = str(row.iloc).strip()
+            uname = str(row.iloc).strip().replace('@', '')
+            bd_str = str(row.iloc).strip().replace('/', '.').replace('-', '.')
             if not bd_str or bd_str.lower() == 'nan': continue
             
-            # Парсим дату (поддержка ДД.ММ или ДД.ММ.ГГГГ)
             parts = bd_str.split('.')
-            if len(parts) < 2: continue
-            
-            d_t = int(float(parts))
-            m_t = int(float(parts))
+            d_t, m_t = int(float(parts)), int(float(parts))
 
-            # Логика фильтрации
             if mode == "month" and m_t == now.month:
                 report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
-            
             elif mode == "day" and d_t == now.day and m_t == now.month:
-                un = ""
-                if user_col:
-                    un = str(row[user_col]).strip().replace('@','')
-                mention = f"@{un}" if un and un.lower() not in ["nan",""] else html.escape(name)
+                mention = f"@{uname}" if uname and uname.lower() != "nan" else html.escape(name)
                 congrats.append(f"<b>{mention}</b>")
-            
             elif mode == "week":
-                # Создаем объект даты для сравнения (в текущем году)
-                try:
-                    bd_date = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
-                    if monday <= bd_date <= sunday:
-                        print(f"[DEBUG] Найдено совпадение (неделя): {name} ({bd_str})")
-                        report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
-                except ValueError: continue # На случай 29 февраля
-                
-        except Exception as e:
-            print(f"[DEBUG] Ошибка в строке {index}: {e}")
-            continue
+                bd_date = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
+                if monday <= bd_date <= sunday:
+                    report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
+        except: continue
 
     bot = Bot(token=TOKEN)
     async with bot:
-        if mode == "month" and report_list:
-            msg = f"🎂 <b>Именинники месяца:</b>\n\n" + "\n".join(sorted(report_list))
-            await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-            print("[DEBUG] Отправлен список на месяц")
+        text = ""
+        if mode == "month" and report_list: text = f"🎂 <b>Именинники месяца:</b>\n\n" + "\n".join(sorted(report_list))
+        elif mode == "week" and report_list: text = f"📅 <b>Дни рождения на неделе:</b>\n\n" + "\n".join(sorted(report_list))
+        elif mode == "day" and congrats: text = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats)
         
-        elif mode == "week" and report_list:
-            msg = f"📅 <b>Дни рождения на этой неделе:</b>\n\n" + "\n".join(sorted(report_list))
-            await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-            print("[DEBUG] Отправлен список на неделю")
-        
-        elif mode == "day" and congrats:
-            msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats)
-            await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-            print("[DEBUG] Отправлено поздравление дня")
-        else:
-            print(f"[DEBUG] Ничего не найдено для режима {mode}")
+        if text: await bot.send_message(int(TARGET_CHAT_ID), text=text, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
 
-# ========================= ВК МОНИТОРИНГ =========================
 async def check_new_vk_members():
     if not VK_TOKEN: return
     try:
-        p = {"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131"}
-        resp = requests.get("https://api.vk.com/method/groups.getMembers", params={**p, "fields": "first_name,last_name"}).json()
-        current_members = resp.get("response", {}).get("items", [])
-        old_ids = set(json.load(open(VK_MEMBERS_FILE)) if os.path.exists(VK_MEMBERS_FILE) else [])
-        new_names = [f"<a href='https://vk.com/id{m['id']}'>{m['first_name']} {m['last_name']}</a>" for m in current_members if m['id'] not in old_ids and old_ids]
-        if new_names:
+        r = requests.get("https://api.vk.com/method/groups.getMembers", params={"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131", "fields": "first_name,last_name"}).json()
+        curr = r.get("response", {}).get("items", [])
+        old = set(json.load(open(VK_MEMBERS_FILE)) if os.path.exists(VK_MEMBERS_FILE) else [])
+        new = [f"<a href='https://vk.com/id{m['id']}'>{m['first_name']} {m['last_name']}</a>" for m in curr if m['id'] not in old and old]
+        if new:
             async with Bot(token=TOKEN) as bot:
-                await bot.send_message(int(TARGET_CHAT_ID), text=f"⚡️ <b>Новый подписчик в ВК!</b>\n\n{', '.join(new_names)} 🎉", parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-        json.dump([m['id'] for m in current_members], open(VK_MEMBERS_FILE, "w"))
-        if new_names or not old_ids: git_push()
+                await bot.send_message(int(TARGET_CHAT_ID), text=f"⚡️ <b>Новый подписчик ВК!</b>\n\n{', '.join(new)} 🎉", parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+        json.dump([m['id'] for m in curr], open(VK_MEMBERS_FILE, "w"))
+        if new: git_push()
     except: pass
 
-# ========================= ЕЖЕНЕДЕЛЬНЫЕ ИТОГИ =========================
-async def send_weekly_stats():
-    headers = login_5verst()
-    if not headers or not VK_TOKEN: return
-    bot = Bot(token=TOKEN)
-    async with bot:
-        try: tg_count = await bot.get_chat_member_count(int(TARGET_CHAT_ID))
-        except: tg_count = "???"
-        vk_r = requests.get("https://api.vk.com/method/groups.getMembers", params={"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131", "count": 0}).json()
-        vk_count = vk_r.get("response", {}).get("count", "???")
-        tz = pytz.timezone(TIMEZONE)
-        now = datetime.now(tz)
-        offset = (now.weekday() - 5) % 7
-        last_sat_dt = now - timedelta(days=offset)
-        last_sat_str = last_sat_dt.strftime("%d.%m.%Y")
-        count_finish, _, _ = get_results_data(last_sat_dt.strftime("%Y-%m-%d"))
-        v_count_unique = 0
-        try:
-            v_resp = requests.post("https://nrms.5verst.ru/api/v1/event/volunteer/list", 
-                                   json={"event_id": EVENT_ID, "event_date": last_sat_str}, headers=headers).json()
-            v_list = v_resp.get("result", {}).get("volunteer_list", [])
-            v_count_unique = len(set(v.get("full_name") for v in v_list))
-        except: pass
-        msg = (f"📈 <b>ИТОГИ НЕДЕЛИ | КСТОВО</b>\n\n👥 <b>Сообщество:</b>\n• Telegram: <b>{tg_count}</b>\n• ВКонтакте: <b>{vk_count}</b>\n\n"
-               f"🏃‍♂️ <b>Последний старт ({last_sat_str}):</b>\n• Финишировало: <b>{count_finish}</b>\n• Волонтеров: <b>{v_count_unique}</b>\n\n🧡 Увидимся на 5 вёрст 🧡!")
-        if ORGS_CHAT_ID:
-            try: await bot.send_message(int(ORGS_CHAT_ID), text=msg, parse_mode=ParseMode.HTML)
-            except: pass
-
-# ========================= MAIN =========================
 async def main():
-    print(f"[DEBUG] Аргументы запуска: {sys.argv}")
-    if len(sys.argv) < 2:
-        print("[DEBUG] Ошибка: нет аргументов")
-        return
-        
-    m = sys.argv
-    
-    if m == "--titles": await update_titles()
-    elif m == "--results": await send_results()
-    elif m == "--vk-check": await check_new_vk_members()
-    elif m == "--stats": await send_weekly_stats()
-    elif m == "--vk-update": await update_vk_status()
-    
-    # Обработка всех вариаций флагов ДР
-    elif "--birthdays" in m:
-        if "week" in m: await check_birthdays("week")
-        elif "month" in m: await check_birthdays("month")
-        elif "auto" in m:
+    if len(sys.argv) < 2: return
+    arg = sys.argv
+    if arg == "--titles": await update_titles()
+    elif arg == "--results": await send_results()
+    elif arg == "--vk-check": await check_new_vk_members()
+    elif arg == "--vk-update": await update_vk_status()
+    elif "--birthdays" in arg:
+        mode = "day"
+        if "week" in arg: mode = "week"
+        elif "month" in arg: mode = "month"
+        elif "auto" in arg:
             now = datetime.now(pytz.timezone(TIMEZONE))
             await check_birthdays("day")
             if now.day == 1: await check_birthdays("month")
             if now.weekday() == 0: await check_birthdays("week")
-        else: await check_birthdays("day")
+            return
+        await check_birthdays(mode)
 
 if __name__ == "__main__":
     asyncio.run(main())
