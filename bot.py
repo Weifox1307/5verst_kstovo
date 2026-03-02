@@ -115,7 +115,7 @@ async def update_titles():
     valid_chat_members = set()
     try:
         res_base = requests.get(SHEET_BASE_URL, timeout=20)
-        res_base.encoding = 'utf-8' # Исправление кодировки
+        res_base.encoding = 'utf-8' # Фикс кириллицы
         df_base = pd.read_csv(StringIO(res_base.text))
         for _, row in df_base.iterrows():
             tg_id = extract_id(row.iloc)
@@ -124,7 +124,7 @@ async def update_titles():
 
     try:
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
-        res_form.encoding = 'utf-8' # Исправление кодировки
+        res_form.encoding = 'utf-8' # Фикс кириллицы
         df_form = pd.read_csv(StringIO(res_form.text))
         for _, row in df_form.iterrows():
             f_tg_id = extract_id(row.iloc)
@@ -165,6 +165,7 @@ async def update_titles():
 def get_results_data(date_str):
     """date_str: YYYY-MM-DD"""
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+    # Используем только прямую ссылку на дату для точности
     url = f"https://5verst.ru/kstovoyubileyniy/results/{url_date}/"
     
     headers = {
@@ -175,6 +176,7 @@ def get_results_data(date_str):
         response = requests.get(url, timeout=20, headers=headers)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
+            # Считаем только те строки, где в первой колонке реально стоит число (место финишера)
             rows = soup.select("table.sortable tbody tr")
             real_finishers = 0
             for row in rows:
@@ -241,7 +243,7 @@ async def send_results():
                 for v in v_list:
                     n, rn = v.get("full_name"), v.get("role_name")
                     vols[n] = vols.get(n, []) + [rn]
-                v_count_unique = len(vols) 
+                v_count_unique = len(vols) # Количество уникальных людей
                 vols_text = f"\n🧡 <b>Команда героев ({v_count_unique}):</b>\n" + \
                             "\n".join([f"• <b>{name}</b> — <i>{', '.join(roles)}</i>" for name, roles in vols.items()])
         except: pass
@@ -277,7 +279,7 @@ async def check_birthdays(mode="day"):
     now = datetime.now(tz)
     try:
         res = requests.get(SHEET_BIRTHDAYS_URL, timeout=30)
-        res.encoding = 'utf-8' # Исправление кодировки для кириллицы
+        res.encoding = 'utf-8' # Фикс кириллицы
         df = pd.read_csv(StringIO(res.text)).fillna("")
     except: return
 
@@ -334,6 +336,7 @@ async def send_weekly_stats():
     
     bot = Bot(token=TOKEN)
     async with bot:
+        # Аудитория
         try:
             tg_count = await bot.get_chat_member_count(int(TARGET_CHAT_ID))
         except: tg_count = "???"
@@ -341,19 +344,23 @@ async def send_weekly_stats():
         vk_r = requests.get("https://api.vk.com/method/groups.getMembers", params={"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131", "count": 0}).json()
         vk_count = vk_r.get("response", {}).get("count", "???")
         
+        # Последний старт
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
         offset = (now.weekday() - 5) % 7
         last_sat_dt = now - timedelta(days=offset)
         last_sat_str = last_sat_dt.strftime("%d.%m.%Y")
         
+        # Честный подсчет финишеров через новую логику
         count_finish, _, _ = get_results_data(last_sat_dt.strftime("%Y-%m-%d"))
         
+        # Честный подсчет УНИКАЛЬНЫХ волонтеров через NRMS
         v_count_unique = 0
         try:
             v_resp = requests.post("https://nrms.5verst.ru/api/v1/event/volunteer/list", 
                                    json={"event_id": EVENT_ID, "event_date": last_sat_str}, headers=headers).json()
             v_list = v_resp.get("result", {}).get("volunteer_list", [])
+            # Считаем количество уникальных full_name
             v_count_unique = len(set(v.get("full_name") for v in v_list))
         except: pass
 
@@ -372,19 +379,28 @@ async def send_weekly_stats():
             except Exception as e:
                 logger.error(f"Не удалось отправить статистику в ORGS_CHAT_ID: {e}")
 
+# ========================= MAIN =========================
 async def main():
     if len(sys.argv) < 2: return
     m = sys.argv
+    
     if m == "--titles": await update_titles()
-    elif m == "--birthdays": await check_birthdays("day")
     elif m == "--results": await send_results()
     elif m == "--vk-check": await check_new_vk_members()
     elif m == "--stats": await send_weekly_stats()
     elif m == "--vk-update": await update_vk_status()
+    
+    # Флаги именинников
+    elif m == "--birthdays" or m == "--birthdays-day": await check_birthdays("day")
+    elif m == "--birthdays-week": await check_birthdays("week")
+    elif m == "--birthdays-month": await check_birthdays("month")
+    
+    # Авто-режим (для крона)
     elif m == "--birthdays-auto":
+        now = datetime.now(pytz.timezone(TIMEZONE))
         await check_birthdays("day")
-        if datetime.now(pytz.timezone(TIMEZONE)).day == 1: await check_birthdays("month")
-        if datetime.now(pytz.timezone(TIMEZONE)).weekday() == 0: await check_birthdays("week")
+        if now.day == 1: await check_birthdays("month")
+        if now.weekday() == 0: await check_birthdays("week")
 
 if __name__ == "__main__":
     asyncio.run(main())
