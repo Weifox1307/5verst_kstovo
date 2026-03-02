@@ -561,9 +561,10 @@ async def send_weekly_stats():
 
 
 # ========================= ЗАПУСК =========================
+# ========================= ЗАПУСК =========================
 async def main():
     if len(sys.argv) < 2:
-        logger.info("Нет аргументов командной строки. Доступные команды: --titles, --birthdays, --birthdays-month, --birthdays-auto, --results, --vk-check, --stats, --vk-update")
+        logger.info("Нет аргументов командной строки. Доступные команды: --titles, --birthdays, --birthdays-month, --birthdays-week, --birthdays-auto, --results, --vk-check, --stats, --vk-update")
         return
 
     m = sys.argv[1]
@@ -574,6 +575,8 @@ async def main():
         await check_birthdays("day")
     elif m == "--birthdays-month":
         await check_birthdays("month")
+    elif m == "--birthdays-week":
+        await check_birthdays("week")
     elif m == "--results":
         await send_results()
     elif m == "--vk-check":
