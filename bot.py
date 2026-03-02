@@ -52,12 +52,14 @@ def parse_flexible_date(date_str):
     """Извлекает день и месяц из любого формата (05.03, 5/3/1990 и т.д.)"""
     if not date_str or str(date_str).lower() == 'nan':
         return None, None
+    # Очищаем строку, оставляя только цифры и разделители
     clean = re.sub(r'[^0-9./-]', '.', str(date_str).strip())
     clean = clean.replace('/', '.').replace('-', '.')
     parts = [p for p in clean.split('.') if p.strip().isdigit()]
     if len(parts) >= 2:
         try:
-            day, month = int(parts), int(parts)
+            day = int(parts)
+            month = int(parts)
             if 1 <= day <= 31 and 1 <= month <= 12:
                 return day, month
         except: pass
@@ -123,7 +125,7 @@ async def update_titles():
         res_base.encoding = 'utf-8'
         df_base = pd.read_csv(StringIO(res_base.text))
         for _, row in df_base.iterrows():
-            tg_id = extract_id(row.iloc)
+            tg_id = extract_id(row.iloc) # Исправлено: добавлен индекс
             if tg_id: valid_chat_members.add(str(tg_id))
     except Exception as e: logger.error(f"Ошибка Sheet1: {e}")
     try:
@@ -131,8 +133,8 @@ async def update_titles():
         res_form.encoding = 'utf-8'
         df_form = pd.read_csv(StringIO(res_form.text))
         for _, row in df_form.iterrows():
-            f_tg_id = extract_id(row.iloc)
-            f_v5_id = extract_id(row.iloc)
+            f_tg_id = extract_id(row.iloc) # Исправлено: добавлен индекс
+            f_v5_id = extract_id(row.iloc) # Исправлено: добавлен индекс
             if f_tg_id and f_v5_id and f_tg_id in valid_chat_members:
                 if str(TARGET_CHAT_ID) not in cache: cache[str(TARGET_CHAT_ID)] = {}
                 cache[str(TARGET_CHAT_ID)][str(f_tg_id)] = int(f_v5_id)
@@ -175,7 +177,7 @@ def get_results_data(date_str):
             real_finishers = 0
             for row in rows:
                 cells = row.find_all("td")
-                if cells and cells.get_text(strip=True).isdigit():
+                if cells and cells.get_text(strip=True).isdigit(): # Исправлено cells -> cells
                     real_finishers += 1
             if real_finishers > 0:
                 h1_text = soup.find('h1').get_text() if soup.find('h1') else ""
@@ -197,11 +199,12 @@ def get_vk_photo(display_date, run_num):
         target = next((a for a in albums if date_pattern in re.sub(r'\D', '', a.get('title', ''))), None)
         if not target and run_num:
             target = next((a for a in albums if f"#{run_num}" in a.get('title', '')), None)
-        if not target and albums: target = albums
+        if not target and albums: target = albums # Исправлено
         if target:
             album_url = f"https://vk.com/album-{VK_GROUP_ID}_{target['id']}"
             p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
-            photos = requests.get("https://api.vk.com/method/photos.get", params=p_img).json().get("response", {}).get("items", [])
+            photos_resp = requests.get("https://api.vk.com/method/photos.get", params=p_img).json()
+            photos = photos_resp.get("response", {}).get("items", [])
             if photos:
                 return album_url, sorted(photos.get("sizes", []), key=lambda x: x['width'])[-1]['url']
     except: pass
@@ -266,20 +269,26 @@ async def check_birthdays(mode="day"):
         res = requests.get(SHEET_BIRTHDAYS_URL, timeout=30)
         res.encoding = 'utf-8'
         df = pd.read_csv(StringIO(res.text)).fillna("")
-    except: return
+    except Exception as e:
+        logger.error(f"Ошибка загрузки таблицы ДР: {e}")
+        return
     congrats, report_list = [], []
     monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
+    
     for _, row in df.iterrows():
         try:
-            name = str(row.iloc).strip()
-            bd_val = str(row.iloc).strip()
+            name = str(row.iloc).strip() # Имя
+            username = str(row.iloc).strip() # TG Username
+            bd_val = str(row.iloc).strip() # Дата
+            
             d_t, m_t = parse_flexible_date(bd_val)
             if d_t is None: continue
+            
             if mode == "month" and m_t == now.month:
                 report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
             elif mode == "day" and d_t == now.day and m_t == now.month:
-                un = str(row.iloc).strip().replace('@','')
+                un = username.replace('@','')
                 mention = f"@{un}" if un and un.lower() not in ["nan",""] else html.escape(name)
                 congrats.append(f"<b>{mention}</b>")
             elif mode == "week":
@@ -287,6 +296,7 @@ async def check_birthdays(mode="day"):
                 if monday <= bd_this_year <= sunday:
                     report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
         except: continue
+        
     bot = Bot(token=TOKEN)
     async with bot:
         if mode == "month" and report_list:
@@ -349,7 +359,7 @@ async def send_weekly_stats():
 
 async def main():
     if len(sys.argv) < 2: return
-    m = sys.argv
+    m = sys.argv # Исправлено: берем первый аргумент
     if m == "--titles": await update_titles()
     elif m == "--birthdays": await check_birthdays("day")
     elif m == "--results": await send_results()
