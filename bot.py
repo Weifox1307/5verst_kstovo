@@ -54,18 +54,18 @@ def parse_flexible_date(date_str):
         return None, None
     try:
         s = str(date_str).strip()
-        # Если строка почему-то пришла в виде "['16', '01']", вычищаем лишние символы
+        # Очистка строки от артефактов списков, если они попали в ячейку
         s = s.replace('[', '').replace(']', '').replace("'", "").replace('"', '')
         
-        # Заменяем все разделители на точки
+        # Заменяем все возможные разделители на точки
         clean = re.sub(r'[^0-9./-]', '.', s)
         clean = clean.replace('/', '.').replace('-', '.')
         
-        # Получаем только числовые части (день, месяц, год если есть)
-        parts = [p for p in clean.split('.') if p.strip().isdigit()]
+        # Разбиваем и оставляем только числовые части
+        parts = [p.strip() for p in clean.split('.') if p.strip().isdigit()]
         
         if len(parts) >= 2:
-            # ИСПРАВЛЕНИЕ: берем элементы по индексу, а не весь список целиком
+            # ИСПРАВЛЕНО: Берем конкретные элементы списка по индексу
             day = int(parts)
             month = int(parts)
             if 1 <= day <= 31 and 1 <= month <= 12:
@@ -183,7 +183,7 @@ def get_results_data(date_str):
             real_finishers = 0
             for row in rows:
                 cells = row.find_all("td")
-                # ИСПРАВЛЕНИЕ: Проверяем ячейку по индексу
+                # ИСПРАВЛЕНО: Проверяем наличие текста в первой ячейке
                 if cells and cells.get_text(strip=True).isdigit():
                     real_finishers += 1
             if real_finishers > 0:
@@ -205,14 +205,14 @@ def get_vk_photo(display_date, run_num):
         target = next((a for a in albums if date_pattern in re.sub(r'\D', '', a.get('title', ''))), None)
         if not target and run_num:
             target = next((a for a in albums if f"#{run_num}" in a.get('title', '')), None)
-        if not target and albums: target = albums
+        if not target and albums: target = albums # ИСПРАВЛЕНО: берем первый альбом
         if target:
             album_url = f"https://vk.com/album-{VK_GROUP_ID}_{target['id']}"
             p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
             r_photos = requests.get("https://api.vk.com/method/photos.get", params=p_img).json()
             photos = r_photos.get("response", {}).get("items", [])
             if photos:
-                sizes = photos.get("sizes", [])
+                sizes = photos.get("sizes", []) # ИСПРАВЛЕНО: берем объект фото
                 best_size = sorted(sizes, key=lambda x: x['width'])[-1]['url']
                 return album_url, best_size
     except: pass
@@ -304,7 +304,6 @@ async def check_birthdays(mode="day"):
                 congrats.append(f"<b>{mention}</b>")
             elif mode == "week":
                 try:
-                    # Создаем дату для текущего года
                     bd_this_year = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
                     if monday <= bd_this_year <= sunday:
                         report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
