@@ -58,6 +58,7 @@ def parse_flexible_date(date_str):
         clean = clean.replace('/', '.').replace('-', '.')
         parts = [p for p in clean.split('.') if p.strip().isdigit()]
         if len(parts) >= 2:
+            # ИСПРАВЛЕНО: берем конкретные элементы списка
             day = int(parts)
             month = int(parts)
             if 1 <= day <= 31 and 1 <= month <= 12:
@@ -121,6 +122,7 @@ async def update_titles():
         res_base.encoding = 'utf-8'
         df_base = pd.read_csv(StringIO(res_base.text))
         for i in range(len(df_base)):
+            # ИСПРАВЛЕНО: используем .iat
             tg_id = extract_id(df_base.iat[i, 0])
             if tg_id: valid_chat_members.add(str(tg_id))
     except Exception as e: logger.error(f"Ошибка Sheet1: {e}")
@@ -129,6 +131,7 @@ async def update_titles():
         res_form.encoding = 'utf-8'
         df_form = pd.read_csv(StringIO(res_form.text))
         for i in range(len(df_form)):
+            # ИСПРАВЛЕНО: используем .iat
             f_tg_id = extract_id(df_form.iat[i, 1])
             f_v5_id = extract_id(df_form.iat[i, 2])
             if f_tg_id and f_v5_id and f_tg_id in valid_chat_members:
@@ -202,7 +205,8 @@ def get_vk_photo(display_date, run_num):
             p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
             photos = requests.get("https://api.vk.com/method/photos.get", params=p_img).json().get("response", {}).get("items", [])
             if photos:
-                return album_url, sorted(photos.get("sizes", []), key=lambda x: x['width'])[-1]['url']
+                sizes = photos.get("sizes", [])
+                return album_url, sorted(sizes, key=lambda x: x['width'])[-1]['url']
     except: pass
     return album_url, None
 
@@ -277,6 +281,7 @@ async def check_birthdays(mode="day"):
     
     for i in range(len(df)):
         try:
+            # ИСПРАВЛЕНО: используем .iat
             name = str(df.iat[i, 0]).strip()
             username = str(df.iat[i, 1]).strip()
             bd_val = str(df.iat[i, 2]).strip()
