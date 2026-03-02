@@ -2,8 +2,8 @@ name: Saturday Weather Forecast
 
 on:
   schedule:
-    # Запуск каждую субботу в 05:00 UTC (08:00 МСК)
-    - cron: '0 5 * * 6'
+    # Запуск каждую субботу в 04:00 UTC (07:00 МСК)
+    - cron: '0 4 * * 6'
   workflow_dispatch: # Кнопка для ручного запуска
 
 jobs:
