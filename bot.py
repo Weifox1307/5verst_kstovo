@@ -61,6 +61,24 @@ def login_5verst():
         logger.error(f"Ошибка авторизации NRMS: {e}")
         return None
 
+def parse_flexible_date(date_str):
+    """Пытается извлечь день и месяц из любого формата (01.02, 1/2, 2000-02-01 и т.д.)"""
+    if not date_str or str(date_str).lower() == 'nan':
+        return None, None
+    # Оставляем только цифры и разделители, меняем всё на точки
+    clean = re.sub(r'[^0-9./-]', '.', str(date_str).strip())
+    clean = clean.replace('/', '.').replace('-', '.')
+    parts = [p for p in clean.split('.') if p.isdigit()]
+    
+    if len(parts) >= 2:
+        try:
+            day = int(parts)
+            month = int(parts)
+            if 1 <= day <= 31 and 1 <= month <= 12:
+                return day, month
+        except: pass
+    return None, None
+
 # ========================= ЛОГИКА ВК =========================
 async def update_vk_status():
     if not VK_TOKEN:
@@ -99,7 +117,7 @@ async def update_titles():
         res_base = requests.get(SHEET_BASE_URL, timeout=20)
         df_base = pd.read_csv(StringIO(res_base.text))
         for _, row in df_base.iterrows():
-            tg_id = extract_id(row.iloc)
+            tg_id = extract_id(row.iloc) # Индекс 0: TG ID в основной базе
             if tg_id: valid_chat_members.add(str(tg_id))
     except Exception as e: logger.error(f"Ошибка Sheet1: {e}")
 
@@ -107,8 +125,8 @@ async def update_titles():
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
         df_form = pd.read_csv(StringIO(res_form.text))
         for _, row in df_form.iterrows():
-            f_tg_id = extract_id(row.iloc)
-            f_v5_id = extract_id(row.iloc)
+            f_tg_id = extract_id(row.iloc) # Индекс 1: TG ID в форме
+            f_v5_id = extract_id(row.iloc) # Индекс 2: ID 5 вёрст
             if f_tg_id and f_v5_id and f_tg_id in valid_chat_members:
                 if str(TARGET_CHAT_ID) not in cache: cache[str(TARGET_CHAT_ID)] = {}
                 cache[str(TARGET_CHAT_ID)][str(f_tg_id)] = int(f_v5_id)
@@ -224,22 +242,20 @@ async def check_birthdays(mode="day"):
     try:
         res = requests.get(SHEET_BIRTHDAYS_URL)
         df = pd.read_csv(StringIO(res.text)).fillna("")
-    except Exception as e: print(f"Ошибка таблицы: {e}"); return
+    except Exception as e: print(f"Ошибка таблицы ДР: {e}"); return
 
     congrats, report_list = [], []
-    monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0)
-    sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59)
+    monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
 
     for _, row in df.iterrows():
         try:
-            name = str(row.iloc).strip()
-            uname = str(row.iloc).strip().replace('@', '')
-            bd_str = str(row.iloc).strip().replace('/', '.').replace('-', '.')
-            if not bd_str or bd_str.lower() == 'nan': continue
+            name = str(row.iloc).strip() # Столбец 0: Имя
+            uname = str(row.iloc).strip().replace('@', '') # Столбец 1: Username
+            bd_str = str(row.iloc).strip() # Столбец 2: Дата
             
-            parts = bd_str.split('.')
-            if len(parts) < 2: continue
-            d_t, m_t = int(float(parts)), int(float(parts))
+            d_t, m_t = parse_flexible_date(bd_str)
+            if d_t is None: continue
 
             if mode == "month" and m_t == now.month:
                 report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
@@ -261,7 +277,9 @@ async def check_birthdays(mode="day"):
         elif mode == "week" and report_list: text = f"📅 <b>Дни рождения на неделе:</b>\n\n" + "\n".join(sorted(report_list))
         elif mode == "day" and congrats: text = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats)
         
-        if text: await bot.send_message(int(TARGET_CHAT_ID), text=text, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+        if text:
+            await bot.send_message(int(TARGET_CHAT_ID), text=text, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            print(f"[DEBUG] Сообщение отправлено в чат {TARGET_CHAT_ID}")
 
 async def check_new_vk_members():
     if not VK_TOKEN: return
@@ -279,9 +297,8 @@ async def check_new_vk_members():
 
 async def main():
     if len(sys.argv) < 2: return
-    args = sys.argv # Это список всех аргументов
+    args = sys.argv
     
-    # Проверяем наличие конкретных флагов в списке аргументов
     if "--titles" in args: await update_titles()
     elif "--results" in args: await send_results()
     elif "--vk-check" in args: await check_new_vk_members()
