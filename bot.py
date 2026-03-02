@@ -364,12 +364,12 @@ async def check_birthdays(mode="day"):
     try:
         res = requests.get(SHEET_BIRTHDAYS_URL, timeout=30)
         res.raise_for_status()
-        res.encoding = 'utf-8'                      # ← ключевой фикс
+        res.encoding = 'utf-8'
 
         df = pd.read_csv(
             StringIO(res.text),
-            encoding='utf-8',                       # ← ключевой фикс
-            dtype=str,                              # предотвращаем преобразование в float
+            encoding='utf-8',
+            dtype=str,
         ).fillna("")
     except Exception as e:
         logger.error(f"Не удалось загрузить таблицу дней рождения: {e}")
@@ -449,6 +449,7 @@ async def check_new_vk_members():
         ).json()
 
         current_members = resp.get("response", {}).get("items", [])
+
         if os.path.exists(VK_MEMBERS_FILE):
             with open(VK_MEMBERS_FILE, "r", encoding="utf-8") as f:
                 old_ids = set(json.load(f))
@@ -547,6 +548,7 @@ async def send_weekly_stats():
 # ========================= ЗАПУСК =========================
 async def main():
     if len(sys.argv) < 2:
+        logger.info("Нет аргументов командной строки. Доступные команды: --titles, --birthdays, --birthdays-month, --birthdays-auto, --results, --vk-check, --stats, --vk-update")
         return
 
     m = sys.argv[1]
@@ -555,6 +557,8 @@ async def main():
         await update_titles()
     elif m == "--birthdays":
         await check_birthdays("day")
+    elif m == "--birthdays-month":
+        await check_birthdays("month")
     elif m == "--results":
         await send_results()
     elif m == "--vk-check":
@@ -570,6 +574,8 @@ async def main():
             await check_birthdays("month")
         if today.weekday() == 0:  # понедельник
             await check_birthdays("week")
+    else:
+        logger.warning(f"Неизвестная команда: {m}")
 
 
 if __name__ == "__main__":
