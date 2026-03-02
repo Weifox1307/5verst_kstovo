@@ -381,7 +381,7 @@ async def check_birthdays(mode="day"):
     monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
 
-        for _, row in df.iterrows():
+    for _, row in df.iterrows():
         try:
             name = str(row.get('name', '')).strip()
             bd_val = str(row.get('birthday', '')).strip().replace('/', '.').replace('-', '.')
@@ -397,8 +397,8 @@ async def check_birthdays(mode="day"):
             d_t = int(float(parts[0]))
             m_t = int(float(parts[1]))
 
-            # Чистим username от @
-            username = username_raw.replace('@', '').strip()
+            # Чистим username
+            username = username_raw.lstrip('@').strip()
             has_username = bool(username and username.lower() not in ["nan", ""])
 
             # Формируем строку упоминания
@@ -407,24 +407,28 @@ async def check_birthdays(mode="day"):
             else:
                 mention = name
 
-            formatted_line = f"• {d_t:02d}.{m_t:02d} — <b>{mention}</b>"
-
-            if mode == "month" and m_t == now.month:
-                report_list.append(formatted_line)
-
-            elif mode == "day" and d_t == now.day and m_t == now.month:
+            # Для ежедневного поздравления оставляем как было (только упоминание)
+            if mode == "day" and d_t == now.day and m_t == now.month:
                 congrats.append(f"<b>{mention}</b>")
 
-            elif mode == "week":
-                try:
-                    bd_this_year = datetime(now.year, m_t, d_t, tzinfo=tz)
-                    if monday <= bd_this_year <= sunday:
-                        report_list.append(formatted_line)
-                except ValueError:
-                    continue  # некорректная дата
+            # Для недели и месяца — имя + username в скобках
+            else:
+                line = f"• {d_t:02d}.{m_t:02d} — <b>{mention}</b>"
+
+                if mode == "month" and m_t == now.month:
+                    report_list.append(line)
+
+                elif mode == "week":
+                    try:
+                        bd_this_year = datetime(now.year, m_t, d_t, tzinfo=tz)
+                        if monday <= bd_this_year <= sunday:
+                            report_list.append(line)
+                    except ValueError:
+                        continue  # некорректная дата (29.02 и т.п.)
 
         except:
             continue
+
     if not (congrats or report_list):
         return
 
