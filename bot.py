@@ -57,15 +57,15 @@ def parse_flexible_date(date_str):
         # Если строка почему-то пришла в виде "['16', '01']", вычищаем лишние символы
         s = s.replace('[', '').replace(']', '').replace("'", "").replace('"', '')
         
-        # Оставляем только цифры и точки/слэши
+        # Заменяем все разделители на точки
         clean = re.sub(r'[^0-9./-]', '.', s)
         clean = clean.replace('/', '.').replace('-', '.')
         
-        # Получаем только числовые части
+        # Получаем только числовые части (день, месяц, год если есть)
         parts = [p for p in clean.split('.') if p.strip().isdigit()]
         
         if len(parts) >= 2:
-            # ИСПРАВЛЕНО: Берем конкретные индексы элементов списка
+            # ИСПРАВЛЕНИЕ: берем элементы по индексу, а не весь список целиком
             day = int(parts)
             month = int(parts)
             if 1 <= day <= 31 and 1 <= month <= 12:
@@ -183,6 +183,7 @@ def get_results_data(date_str):
             real_finishers = 0
             for row in rows:
                 cells = row.find_all("td")
+                # ИСПРАВЛЕНИЕ: Проверяем ячейку по индексу
                 if cells and cells.get_text(strip=True).isdigit():
                     real_finishers += 1
             if real_finishers > 0:
@@ -208,8 +209,8 @@ def get_vk_photo(display_date, run_num):
         if target:
             album_url = f"https://vk.com/album-{VK_GROUP_ID}_{target['id']}"
             p_img = {"owner_id": -VK_GROUP_ID, "album_id": target['id'], "access_token": VK_TOKEN, "v": "5.131", "count": 1}
-            photos_resp = requests.get("https://api.vk.com/method/photos.get", params=p_img).json()
-            photos = photos_resp.get("response", {}).get("items", [])
+            r_photos = requests.get("https://api.vk.com/method/photos.get", params=p_img).json()
+            photos = r_photos.get("response", {}).get("items", [])
             if photos:
                 sizes = photos.get("sizes", [])
                 best_size = sorted(sizes, key=lambda x: x['width'])[-1]['url']
