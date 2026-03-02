@@ -66,6 +66,59 @@ def login_5verst():
         logger.error(f"Ошибка авторизации NRMS: {e}")
         return None
 
+# ========================= ЛОГИКА ПОГОДЫ =========================
+async def send_weather_forecast():
+    # Координаты парка Юбилейный (Кстово)
+    lat, lon = 56.1611, 44.2182
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,precipitation_probability,weathercode&forecast_days=1&timezone={TIMEZONE}"
+    
+    try:
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        
+        # Ищем индекс для 9:00 утра
+        times = data['hourly']['time']
+        now_tz = datetime.now(pytz.timezone(TIMEZONE))
+        # Формируем строку времени для поиска в API (сегодняшнее число, 09:00)
+        target_hour = now_tz.replace(hour=9, minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+        
+        try:
+            idx = times.index(target_hour)
+        except:
+            idx = 9 # Если не нашли, берем 9-й час по списку
+
+        temp = data['hourly']['temperature_2m'][idx]
+        prob = data['hourly']['precipitation_probability'][idx]
+        code = data['hourly']['weathercode'][idx]
+
+        # Маппинг кодов погоды WMO
+        weather_map = {
+            0: "Ясно ☀️", 1: "Преимущественно ясно 🌤", 2: "Переменная облачность ⛅️", 3: "Пасмурно ☁️",
+            45: "Туман 🌫", 51: "Морось 🌦", 61: "Небольшой дождь 🌧", 63: "Дождь ☔️",
+            71: "Снег ❄️", 73: "Снегопад ❄️❄️", 80: "Ливневый дождь ⛈"
+        }
+        status = weather_map.get(code, "Облачно")
+
+        msg = (
+            f"🌳 <b>Погода на старте в 09:00:</b>\n\n"
+            f"🌡 Температура: <b>{temp}°C</b>\n"
+            f"☁️ На улице: <b>{status}</b>\n"
+            f"☔️ Вероятность осадков: <b>{prob}%</b>\n\n"
+            f"Одевайтесь по погоде! Ждем вас в Юбилейном! 🧡"
+        )
+
+        bot = Bot(token=TOKEN)
+        async with bot:
+            await bot.send_message(
+                int(TARGET_CHAT_ID),
+                text=msg,
+                parse_mode=ParseMode.HTML,
+                message_thread_id=THREAD_ID
+            )
+            logger.info("Прогноз погоды отправлен.")
+    except Exception as e:
+        logger.error(f"Ошибка получения погоды: {e}")
 
 # ========================= ЛОГИКА ВК (СТАТУС И ДАТА) =========================
 async def update_vk_status():
@@ -561,40 +614,27 @@ async def send_weekly_stats():
 
 
 # ========================= ЗАПУСК =========================
-# ========================= ЗАПУСК =========================
 async def main():
     if len(sys.argv) < 2:
-        logger.info("Нет аргументов командной строки. Доступные команды: --titles, --birthdays, --birthdays-month, --birthdays-week, --birthdays-auto, --results, --vk-check, --stats, --vk-update")
+        logger.info("Аргументы: --titles, --weather, --birthdays, --birthdays-month, --birthdays-week, --birthdays-auto, --results, --vk-check, --stats, --vk-update")
         return
 
     m = sys.argv[1]
-
-    if m == "--titles":
-        await update_titles()
-    elif m == "--birthdays":
-        await check_birthdays("day")
-    elif m == "--birthdays-month":
-        await check_birthdays("month")
-    elif m == "--birthdays-week":
-        await check_birthdays("week")
-    elif m == "--results":
-        await send_results()
-    elif m == "--vk-check":
-        await check_new_vk_members()
-    elif m == "--stats":
-        await send_weekly_stats()
-    elif m == "--vk-update":
-        await update_vk_status()
+    if m == "--titles": await update_titles()
+    elif m == "--weather": await send_weather_forecast()
+    elif m == "--birthdays": await check_birthdays("day")
+    elif m == "--birthdays-month": await check_birthdays("month")
+    elif m == "--birthdays-week": await check_birthdays("week")
+    elif m == "--results": await send_results()
+    elif m == "--vk-check": await check_new_vk_members()
+    elif m == "--stats": await send_weekly_stats()
+    elif m == "--vk-update": await update_vk_status()
     elif m == "--birthdays-auto":
         await check_birthdays("day")
         today = datetime.now(pytz.timezone(TIMEZONE))
-        if today.day == 1:
-            await check_birthdays("month")
-        if today.weekday() == 0:  # понедельник
-            await check_birthdays("week")
-    else:
-        logger.warning(f"Неизвестная команда: {m}")
-
+        if today.day == 1: await check_birthdays("month")
+        if today.weekday() == 0: await check_birthdays("week")
+    else: logger.warning(f"Неизвестная команда: {m}")
 
 if __name__ == "__main__":
     asyncio.run(main())
