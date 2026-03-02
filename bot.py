@@ -381,11 +381,11 @@ async def check_birthdays(mode="day"):
     monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
 
-    for _, row in df.iterrows():
+        for _, row in df.iterrows():
         try:
             name = str(row.get('name', '')).strip()
             bd_val = str(row.get('birthday', '')).strip().replace('/', '.').replace('-', '.')
-            un = str(row.get('username', '')).strip().replace('@', '')
+            username_raw = str(row.get('username', '')).strip()
 
             if not name or not bd_val or '.' not in bd_val:
                 continue
@@ -397,14 +397,20 @@ async def check_birthdays(mode="day"):
             d_t = int(float(parts[0]))
             m_t = int(float(parts[1]))
 
-            # Единая логика упоминания
-            if un and un.lower() not in ["nan", ""]:
-                mention = f"@{un}"
+            # Чистим username от @
+            username = username_raw.replace('@', '').strip()
+            has_username = bool(username and username.lower() not in ["nan", ""])
+
+            # Формируем строку упоминания
+            if has_username:
+                mention = f"{name} (@{username})"
             else:
                 mention = name
 
+            formatted_line = f"• {d_t:02d}.{m_t:02d} — <b>{mention}</b>"
+
             if mode == "month" and m_t == now.month:
-                report_list.append(f"• {d_t:02d}.{m_t:02d} — <b>{mention}</b>")
+                report_list.append(formatted_line)
 
             elif mode == "day" and d_t == now.day and m_t == now.month:
                 congrats.append(f"<b>{mention}</b>")
@@ -413,12 +419,12 @@ async def check_birthdays(mode="day"):
                 try:
                     bd_this_year = datetime(now.year, m_t, d_t, tzinfo=tz)
                     if monday <= bd_this_year <= sunday:
-                        report_list.append(f"• {d_t:02d}.{m_t:02d} — <b>{mention}</b>")
+                        report_list.append(formatted_line)
                 except ValueError:
-                    continue
+                    continue  # некорректная дата
+
         except:
             continue
-
     if not (congrats or report_list):
         return
 
