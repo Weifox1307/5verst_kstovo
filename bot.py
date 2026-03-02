@@ -120,17 +120,17 @@ async def update_titles():
         res_base = requests.get(SHEET_BASE_URL, timeout=20)
         res_base.encoding = 'utf-8'
         df_base = pd.read_csv(StringIO(res_base.text))
-        for _, row in df_base.iterrows():
-            tg_id = extract_id(row.iloc)
+        for i in range(len(df_base)):
+            tg_id = extract_id(df_base.iat[i, 0])
             if tg_id: valid_chat_members.add(str(tg_id))
     except Exception as e: logger.error(f"Ошибка Sheet1: {e}")
     try:
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
         res_form.encoding = 'utf-8'
         df_form = pd.read_csv(StringIO(res_form.text))
-        for _, row in df_form.iterrows():
-            f_tg_id = extract_id(row.iloc)
-            f_v5_id = extract_id(row.iloc)
+        for i in range(len(df_form)):
+            f_tg_id = extract_id(df_form.iat[i, 1])
+            f_v5_id = extract_id(df_form.iat[i, 2])
             if f_tg_id and f_v5_id and f_tg_id in valid_chat_members:
                 if str(TARGET_CHAT_ID) not in cache: cache[str(TARGET_CHAT_ID)] = {}
                 cache[str(TARGET_CHAT_ID)][str(f_tg_id)] = int(f_v5_id)
@@ -188,7 +188,7 @@ def get_vk_photo(display_date, run_num):
     album_url = f"https://vk.com/albums-{VK_GROUP_ID}"
     if not VK_TOKEN: return album_url, None
     try:
-        day, month, _ = display_date.split('.')
+        day, month = display_date.split('.')[:2]
         date_pattern = f"{day}{month}"
         p = {"owner_id": -VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131"}
         resp = requests.get("https://api.vk.com/method/photos.getAlbums", params=p).json()
@@ -275,11 +275,11 @@ async def check_birthdays(mode="day"):
     monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
     
-    for i, row in df.iterrows():
+    for i in range(len(df)):
         try:
-            name = str(row.iloc).strip()
-            username = str(row.iloc).strip()
-            bd_val = str(row.iloc).strip()
+            name = str(df.iat[i, 0]).strip()
+            username = str(df.iat[i, 1]).strip()
+            bd_val = str(df.iat[i, 2]).strip()
             
             d_t, m_t = parse_flexible_date(bd_val)
             if d_t is None: continue
@@ -369,7 +369,6 @@ async def send_weekly_stats():
 async def main():
     if len(sys.argv) < 2: return
     
-    # Прямое чтение флага из списка аргументов
     arg_list = sys.argv
     print(f"DEBUG: Аргумент принят: {arg_list}")
     
