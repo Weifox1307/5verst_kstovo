@@ -258,83 +258,96 @@ def git_push():
 
 # ========================= ДНИ РОЖДЕНИЯ =========================
 async def check_birthdays(mode="day"):
+    print(f"\n[DEBUG] Запуск check_birthdays с режимом: {mode}")
     if not SHEET_BIRTHDAYS_URL:
-        print("Ошибка: SHEET_BIRTHDAYS_URL не задан!")
+        print("[DEBUG] Ошибка: SHEET_BIRTHDAYS_URL не задан!")
         return
     
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
-    print(f"Запуск именинников. Режим: {mode}, Сегодняшняя дата (МСК): {now.strftime('%d.%m.%Y')}")
+    print(f"[DEBUG] Текущее время (МСК): {now.strftime('%d.%m.%Y %H:%M')}")
 
     try:
+        print(f"[DEBUG] Загрузка таблицы по URL: {SHEET_BIRTHDAYS_URL[:50]}...")
         res = requests.get(SHEET_BIRTHDAYS_URL, timeout=30)
         res.encoding = 'utf-8'
         df = pd.read_csv(StringIO(res.text)).fillna("")
-        print(f"Таблица загружена успешно. Всего строк: {len(df)}")
+        print(f"[DEBUG] Таблица загружена. Названия колонок: {list(df.columns)}")
     except Exception as e:
-        print(f"Ошибка загрузки таблицы: {e}")
+        print(f"[DEBUG] Ошибка загрузки CSV: {e}")
         return
 
     congrats, report_list = [], []
     
-    # Считаем начало и конец текущей недели
+    # Определяем границы недели (Пн-Вс)
     monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     sunday = (monday + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
     
     if mode == "week":
-        print(f"Окно поиска на неделю: с {monday.strftime('%d.%m')} по {sunday.strftime('%d.%m')}")
+        print(f"[DEBUG] Ищем ДР в интервале: {monday.strftime('%d.%m')} - {sunday.strftime('%d.%m')}")
+
+    # Пытаемся найти нужные колонки вне зависимости от регистра
+    col_map = {col.lower(): col for col in df.columns}
+    name_col = col_map.get('name', df.columns)
+    bd_col = col_map.get('birthday', df.columns if len(df.columns)>2 else df.columns[-1])
+    user_col = col_map.get('username', df.columns if len(df.columns)>1 else None)
 
     for index, row in df.iterrows():
         try:
-            name = str(row['name']).strip()
-            bd_val = str(row['birthday']).strip().replace('/', '.').replace('-', '.')
+            name = str(row[name_col]).strip()
+            bd_str = str(row[bd_col]).strip().replace('/', '.').replace('-', '.')
             
-            if not bd_val: continue
+            if not bd_str or bd_str.lower() == 'nan': continue
             
-            parts = bd_val.split('.')
+            # Парсим дату (поддержка ДД.ММ или ДД.ММ.ГГГГ)
+            parts = bd_str.split('.')
             if len(parts) < 2: continue
             
-            d_t, m_t = int(float(parts)), int(float(parts))
+            d_t = int(float(parts))
+            m_t = int(float(parts))
 
-            # Режим месяца
+            # Логика фильтрации
             if mode == "month" and m_t == now.month:
                 report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
             
-            # Режим дня
             elif mode == "day" and d_t == now.day and m_t == now.month:
-                un = str(row.get('username', '')).strip().replace('@','')
+                un = ""
+                if user_col:
+                    un = str(row[user_col]).strip().replace('@','')
                 mention = f"@{un}" if un and un.lower() not in ["nan",""] else html.escape(name)
                 congrats.append(f"<b>{mention}</b>")
             
-            # Режим недели
             elif mode == "week":
-                # Создаем дату ДР в этом году
-                bd_this_year = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
-                if monday <= bd_this_year <= sunday:
-                    print(f"Найдено совпадение на неделю: {name} ({bd_this_year.strftime('%d.%m')})")
-                    report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
+                # Создаем объект даты для сравнения (в текущем году)
+                try:
+                    bd_date = datetime(now.year, m_t, d_t).replace(tzinfo=tz)
+                    if monday <= bd_date <= sunday:
+                        print(f"[DEBUG] Найдено совпадение (неделя): {name} ({bd_str})")
+                        report_list.append(f"• {d_t:02d}.{m_t:02d} — {html.escape(name)}")
+                except ValueError: continue # На случай 29 февраля
+                
         except Exception as e:
-            print(f"Ошибка обработки строки {index}: {e}")
+            print(f"[DEBUG] Ошибка в строке {index}: {e}")
             continue
 
     bot = Bot(token=TOKEN)
     async with bot:
         if mode == "month" and report_list:
-            text = f"🎂 <b>Именинники месяца:</b>\n\n" + "\n".join(sorted(report_list))
-            await bot.send_message(int(TARGET_CHAT_ID), text=text, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-            print("Сообщение о месяцах отправлено.")
+            msg = f"🎂 <b>Именинники месяца:</b>\n\n" + "\n".join(sorted(report_list))
+            await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            print("[DEBUG] Отправлен список на месяц")
         
         elif mode == "week" and report_list:
-            text = f"📅 <b>Дни рождения на неделе ({monday.strftime('%d.%m')} - {sunday.strftime('%d.%m')}):</b>\n\n" + "\n".join(sorted(report_list))
-            await bot.send_message(int(TARGET_CHAT_ID), text=text, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-            print("Сообщение о неделе отправлено.")
+            msg = f"📅 <b>Дни рождения на этой неделе:</b>\n\n" + "\n".join(sorted(report_list))
+            await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            print("[DEBUG] Отправлен список на неделю")
         
         elif mode == "day" and congrats:
-            text = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats)
-            await bot.send_message(int(TARGET_CHAT_ID), text=text, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
-            print("Поздравление дня отправлено.")
+            msg = f"🌟 <b>СЕГОДНЯ ДЕНЬ РОЖДЕНИЯ!</b> 🌟\n\n" + "\n".join(congrats)
+            await bot.send_message(int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+            print("[DEBUG] Отправлено поздравление дня")
         else:
-            print(f"Для режима {mode} совпадений не найдено. Список пуст.")
+            print(f"[DEBUG] Ничего не найдено для режима {mode}")
 
 # ========================= ВК МОНИТОРИНГ =========================
 async def check_new_vk_members():
@@ -383,9 +396,11 @@ async def send_weekly_stats():
 
 # ========================= MAIN =========================
 async def main():
+    print(f"[DEBUG] Аргументы запуска: {sys.argv}")
     if len(sys.argv) < 2:
-        print("Нет аргументов запуска")
+        print("[DEBUG] Ошибка: нет аргументов")
         return
+        
     m = sys.argv
     
     if m == "--titles": await update_titles()
@@ -394,15 +409,16 @@ async def main():
     elif m == "--stats": await send_weekly_stats()
     elif m == "--vk-update": await update_vk_status()
     
-    elif m == "--birthdays" or m == "--birthdays-day": await check_birthdays("day")
-    elif m == "--birthdays-week": await check_birthdays("week")
-    elif m == "--birthdays-month": await check_birthdays("month")
-    
-    elif m == "--birthdays-auto":
-        now = datetime.now(pytz.timezone(TIMEZONE))
-        await check_birthdays("day")
-        if now.day == 1: await check_birthdays("month")
-        if now.weekday() == 0: await check_birthdays("week")
+    # Обработка всех вариаций флагов ДР
+    elif "--birthdays" in m:
+        if "week" in m: await check_birthdays("week")
+        elif "month" in m: await check_birthdays("month")
+        elif "auto" in m:
+            now = datetime.now(pytz.timezone(TIMEZONE))
+            await check_birthdays("day")
+            if now.day == 1: await check_birthdays("month")
+            if now.weekday() == 0: await check_birthdays("week")
+        else: await check_birthdays("day")
 
 if __name__ == "__main__":
     asyncio.run(main())
