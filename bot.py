@@ -511,12 +511,15 @@ async def check_new_vk_members():
 
     try:
         p = {"group_id": VK_GROUP_ID, "access_token": VK_TOKEN, "v": "5.131"}
+        # Запрашиваем участников с полями имени и фамилии
         resp = requests.get(
             "https://api.vk.com/method/groups.getMembers",
             params={**p, "fields": "first_name,last_name"}
         ).json()
 
-        current_members = resp.get("response", {}).get("items", [])
+        response_data = resp.get("response", {})
+        current_members = response_data.get("items", [])
+        total_count = response_data.get("count", 0)
 
         if os.path.exists(VK_MEMBERS_FILE):
             with open(VK_MEMBERS_FILE, "r", encoding="utf-8") as f:
@@ -531,10 +534,18 @@ async def check_new_vk_members():
         ]
 
         if new_names:
+            # Считаем, сколько осталось до ближайшей "красивой" цифры (кратно 50)
+            next_goal = ((total_count // 50) + 1) * 50
+            remains = next_goal - total_count
+            
+            goal_text = ""
+            if remains > 0:
+                goal_text = f"\n\n📈 Нас уже <b>{total_count}</b>! До цели в {next_goal} осталось {remains} чел."
+
             async with Bot(token=TOKEN) as bot:
                 await bot.send_message(
                     int(TARGET_CHAT_ID),
-                    text=f"⚡️ <b>Новый подписчик в ВК!</b>\n\n{', '.join(new_names)} 🎉",
+                    text=f"⚡️ <b>Новый подписчик в ВК!</b>\n\n{', '.join(new_names)} 🎉{goal_text}",
                     parse_mode=ParseMode.HTML,
                     message_thread_id=THREAD_ID
                 )
