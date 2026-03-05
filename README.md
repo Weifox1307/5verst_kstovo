@@ -83,3 +83,6 @@ python main.py --vk-check
 
 # Запустить автоматический цикл поздравлений
 python main.py --birthdays-auto
+```
+---
+**Developed with ⚡️ by Roman Bekov**
