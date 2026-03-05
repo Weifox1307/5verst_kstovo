@@ -534,13 +534,16 @@ async def check_new_vk_members():
         ]
 
         if new_names:
-            # Считаем, сколько осталось до ближайшей "красивой" цифры (кратно 50)
-            next_goal = ((total_count // 50) + 1) * 50
-            remains = next_goal - total_count
+            # --- НОВАЯ ЛОГИКА ЦЕЛЕЙ ---
+            goals = [250, 500, 700, 1000, 1500, 2000, 5000]
+            next_goal = next((g for g in goals if g > total_count), None)
             
             goal_text = ""
-            if remains > 0:
+            if next_goal:
+                remains = next_goal - total_count
                 goal_text = f"\n\n📈 Нас уже <b>{total_count}</b>! До цели в {next_goal} осталось {remains} чел."
+            else:
+                goal_text = f"\n\n📈 Нас уже <b>{total_count}</b>! Мы превзошли все цели! 🔥"
 
             async with Bot(token=TOKEN) as bot:
                 await bot.send_message(
@@ -596,8 +599,8 @@ async def send_weekly_stats():
                 "https://nrms.5verst.ru/api/v1/event/volunteer/list",
                 json={"event_id": EVENT_ID, "event_date": last_sat_str},
                 headers=headers
-            ).json()
-            v_list = v_resp.get("result", {}).get("volunteer_list", [])
+            )
+            v_list = v_resp.json().get("result", {}).get("volunteer_list", [])
             v_count_unique = len(set(v.get("full_name") for v in v_list))
         except:
             pass
