@@ -177,26 +177,35 @@ async def update_titles():
     new_people = [] # Список для уведомления во флудилку
 
     # 2. Читаем таблицу с ответами формы
-    try:
-        res_form = requests.get(SHEET_FORM_URL, timeout=20)
-        df_form = pd.read_csv(StringIO(res_form.text), encoding="utf-8")
-        
-        for _, row in df_form.iterrows():
-            f_tg_id = extract_id(row.iloc[1]) # Столбец с Telegram ID
-            f_v5_id = extract_id(row.iloc[2]) # Столбец с ID 5 вёрст
+        try:
+            res_form = requests.get(SHEET_FORM_URL, timeout=20)
+            df_form = pd.read_csv(StringIO(res_form.text), encoding="utf-8")
             
-            if f_tg_id and f_v5_id:
-                # Если этого человека еще нет в кэше — он новый!
-                if str(f_tg_id) not in chat_cache:
-                    # Добавляем в список для уведомления
-                    user_link = f"<a href='tg://user?id={f_tg_id}'>Участник</a>"
-                    new_people.append(f"• {user_link} (ID: {f_v5_id})")
+            bot = Bot(token=TOKEN) # Создаем объект бота заранее для запроса имен
+            
+            for _, row in df_form.iterrows():
+                f_tg_id = extract_id(row.iloc[1])
+                f_v5_id = extract_id(row.iloc[2])
                 
-                # Обновляем кэш
-                chat_cache[str(f_tg_id)] = int(f_v5_id)
-                
-    except Exception as e:
-        logger.error(f"Ошибка при чтении таблицы формы: {e}")
+                if f_tg_id and f_v5_id:
+                    if str(f_tg_id) not in chat_cache:
+                        # Пытаемся получить имя пользователя из Telegram
+                        try:
+                            member = await bot.get_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=int(f_tg_id))
+                            user = member.user
+                            first_name = user.first_name or "Участник"
+                            username = f" (@{user.username})" if user.username else ""
+                            display_name = f"{first_name}{username}"
+                        except Exception:
+                            # Если не удалось получить данные (например, бот не видит юзера)
+                            display_name = f"Участник {f_tg_id}"
+                        
+                        user_link = f"<a href='tg://user?id={f_tg_id}'>{display_name}</a>"
+                        new_people.append(f"• {user_link} (ID: {f_v5_id})")
+                    
+                    chat_cache[str(f_tg_id)] = int(f_v5_id)
+        except Exception as e:
+            logger.error(f"Ошибка при чтении таблицы формы: {e}")
 
     # 3. Сохраняем обновленный кэш обратно в файл
     full_cache[str(TARGET_CHAT_ID)] = chat_cache
