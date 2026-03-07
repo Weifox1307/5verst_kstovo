@@ -34,6 +34,7 @@ VK_MEMBERS_FILE = "vk_members.json"
 SHEET_BIRTHDAYS_URL = os.getenv("SHEET_BIRTHDAYS_URL")
 
 THREAD_ID_ENV = os.getenv("THREAD_ID")
+FLUD_THREAD_ID = os.getenv("FLUD_THREAD_ID")
 THREAD_ID = int(THREAD_ID_ENV) if THREAD_ID_ENV and THREAD_ID_ENV.strip() else None
 
 # Настройки для Кстово Юбилейный
@@ -165,6 +166,9 @@ async def update_vk_status():
 async def update_titles():
     logger.info("--- ОБНОВЛЕНИЕ ТИТУЛОВ ---")
 
+    # Получаем ID флудилки из переменных окружения
+    FLUD_THREAD_ID = os.getenv("FLUD_THREAD_ID")
+
     # 1. Загружаем кэш
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
@@ -226,11 +230,13 @@ async def update_titles():
                 f"<i>Бот приступает к обновлению титулов...</i>"
             )
             try:
+                # Используем FLUD_THREAD_ID для отправки именно во флудилку
+                target_thread = int(FLUD_THREAD_ID) if FLUD_THREAD_ID else THREAD_ID
                 await bot.send_message(
                     chat_id=int(TARGET_CHAT_ID),
                     text=msg,
                     parse_mode=ParseMode.HTML,
-                    message_thread_id=THREAD_ID
+                    message_thread_id=target_thread
                 )
             except Exception as e:
                 logger.error(f"Ошибка отправки уведомления: {e}")
