@@ -1,10 +1,15 @@
-name: Update 5Verst Titles and Results
+name: 5Verst Full Automation
 
 on:
   schedule:
-    - cron: '0 11 * * 6'      # Суббота 14:00 МСК (Титулы)
-    - cron: '*/20 7-10 * * 6' # Суббота с 10:00 до 13:00 МСК каждые 20 минут (Результаты)
-  workflow_dispatch:
+    - cron: '0 5 * * 6'       # Сб 08:00 МСК — Погода
+    - cron: '*/20 7-10 * * 6' # Сб 10:00-13:00 МСК — Результаты (каждые 20 мин)
+    - cron: '0 11 * * 6'      # Сб 14:00 МСК — Титулы
+    - cron: '5 6 * * *'       # Каждый день 09:05 МСК — Дни рождения
+    - cron: '0 */6 * * *'     # Каждые 6 часов — Подписчики ВК
+    - cron: '0 15 * * 5'      # Пт 18:00 МСК — Статус ВК и Титулы (подготовка)
+    - cron: '0 18 * * 0'      # Вс 21:00 МСК — Итоги недели для оргов
+  workflow_dispatch:          # Ручной запуск
 
 jobs:
   update:
@@ -24,33 +29,42 @@ jobs:
       - name: Install dependencies
         run: pip install python-telegram-bot requests pandas beautifulsoup4 pytz
 
-      - name: Run Title Updater
-        if: github.event.schedule == '0 11 * * 6' || github.event_name == 'workflow_dispatch'
+      - name: Run Task
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
+          ORGS_CHAT_ID: ${{ secrets.ORGS_CHAT_ID }}
           NRMS_USERNAME: ${{ secrets.NRMS_USERNAME }}
           NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
           SHEET_BASE_URL: ${{ secrets.SHEET_BASE_URL }}
           SHEET_FORM_URL: ${{ secrets.SHEET_FORM_URL }}
-          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
-          THREAD_ID: ${{ secrets.THREAD_ID }}
-        run: python bot.py --titles 
-
-      - name: Run Results Checker
-        if: contains(github.event.schedule, '*/20') || github.event_name == 'workflow_dispatch'
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          NRMS_USERNAME: ${{ secrets.NRMS_USERNAME }}
-          NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
-          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
+          SHEET_BIRTHDAYS_URL: ${{ secrets.SHEET_BIRTHDAYS_URL }}
           VK_TOKEN: ${{ secrets.VK_TOKEN }}
           THREAD_ID: ${{ secrets.THREAD_ID }}
-        run: python bot.py --results
+        run: |
+          if [[ "${{ github.event.schedule }}" == "0 5 * * 6" ]]; then
+            python bot.py --weather
+          elif [[ "${{ github.event.schedule }}" == "*/20 7-10 * * 6" ]]; then
+            python bot.py --results
+          elif [[ "${{ github.event.schedule }}" == "0 11 * * 6" ]]; then
+            python bot.py --titles
+          elif [[ "${{ github.event.schedule }}" == "5 6 * * *" ]]; then
+            python bot.py --birthdays-auto
+          elif [[ "${{ github.event.schedule }}" == "0 */6 * * *" ]]; then
+            python bot.py --vk-check
+          elif [[ "${{ github.event.schedule }}" == "0 15 * * 5" ]]; then
+            python bot.py --vk-update && python bot.py --titles
+          elif [[ "${{ github.event.schedule }}" == "0 18 * * 0" ]]; then
+            python bot.py --stats
+          else
+            # При ручном запуске прогоняем критичные штуки
+            python bot.py --results
+          fi
 
       - name: Save Changes to Repo
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
-          git add 5verst_cache.json last_report.txt || echo "No files to add"
-          git commit -m "Auto-update cache and logs" || echo "No changes to commit"
+          git add 5verst_cache.json last_report.txt vk_members.json || echo "No files"
+          git commit -m "Auto-update logs" || echo "No changes"
           git push || echo "Nothing to push"
