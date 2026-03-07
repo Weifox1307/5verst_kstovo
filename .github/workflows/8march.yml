@@ -23,7 +23,8 @@ jobs:
 
       - name: Send Message
         env:
-          TOKEN: ${{ secrets.TOKEN }}
-          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }} # Убрали S здесь
+          # Слева — имя для Python, справа — точное имя из твоих настроек GitHub
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }} 
+          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
           THREAD_ID: ${{ secrets.THREAD_ID }}
         run: python congrats.py
