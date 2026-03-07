@@ -161,12 +161,11 @@ async def update_vk_status():
     except Exception as e:
         logger.error(f"Ошибка ВК API: {e}")
 
-
 # ========================= ЛОГИКА ТИТУЛОВ =========================
 async def update_titles():
     logger.info("--- ОБНОВЛЕНИЕ ТИТУЛОВ ---")
 
-    # 1. Загружаем существующий кэш
+    # 1. Загружаем кэш
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             full_cache = json.load(f)
@@ -174,52 +173,50 @@ async def update_titles():
         full_cache = {str(TARGET_CHAT_ID): {}}
 
     chat_cache = full_cache.get(str(TARGET_CHAT_ID), {})
-    new_people = [] # Список для уведомления во флудилку
+    new_people = []
 
     # 2. Читаем таблицу с ответами формы
-        try:
-            res_form = requests.get(SHEET_FORM_URL, timeout=20)
-            df_form = pd.read_csv(StringIO(res_form.text), encoding="utf-8")
+    try:
+        res_form = requests.get(SHEET_FORM_URL, timeout=20)
+        df_form = pd.read_csv(StringIO(res_form.text), encoding="utf-8")
+        
+        # Создаем временный объект бота для запроса имен
+        temp_bot = Bot(token=TOKEN)
+        
+        for _, row in df_form.iterrows():
+            f_tg_id = extract_id(row.iloc[1])
+            f_v5_id = extract_id(row.iloc[2])
             
-            bot = Bot(token=TOKEN) # Создаем объект бота заранее для запроса имен
-            
-            for _, row in df_form.iterrows():
-                f_tg_id = extract_id(row.iloc[1])
-                f_v5_id = extract_id(row.iloc[2])
-                
-                if f_tg_id and f_v5_id:
-                    if str(f_tg_id) not in chat_cache:
-                        # Пытаемся получить имя пользователя из Telegram
-                        try:
-                            member = await bot.get_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=int(f_tg_id))
-                            user = member.user
-                            first_name = user.first_name or "Участник"
-                            username = f" (@{user.username})" if user.username else ""
-                            display_name = f"{first_name}{username}"
-                        except Exception:
-                            # Если не удалось получить данные (например, бот не видит юзера)
-                            display_name = f"Участник {f_tg_id}"
-                        
-                        user_link = f"<a href='tg://user?id={f_tg_id}'>{display_name}</a>"
-                        new_people.append(f"• {user_link} (ID: {f_v5_id})")
+            if f_tg_id and f_v5_id:
+                tg_id_str = str(f_tg_id)
+                if tg_id_str not in chat_cache:
+                    # Пытаемся красиво оформить имя
+                    try:
+                        member = await temp_bot.get_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=int(f_tg_id))
+                        user = member.user
+                        first_name = user.first_name or "Участник"
+                        username = f" (@{user.username})" if user.username else ""
+                        display_name = f"{first_name}{username}"
+                    except Exception:
+                        display_name = f"Участник {f_tg_id}"
                     
-                    chat_cache[str(f_tg_id)] = int(f_v5_id)
-        except Exception as e:
-            logger.error(f"Ошибка при чтении таблицы формы: {e}")
+                    user_link = f"<a href='tg://user?id={f_tg_id}'>{display_name}</a>"
+                    new_people.append(f"• {user_link} (ID: {f_v5_id})")
+                
+                chat_cache[tg_id_str] = int(f_v5_id)
+    except Exception as e:
+        logger.error(f"Ошибка при чтении таблицы формы: {e}")
 
-    # 3. Сохраняем обновленный кэш обратно в файл
+    # 3. Сохраняем кэш
     full_cache[str(TARGET_CHAT_ID)] = chat_cache
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(full_cache, f, indent=2, ensure_ascii=False)
 
     bot = Bot(token=TOKEN)
     async with bot:
-        # --- БЛОК УВЕДОМЛЕНИЯ ВО ФЛУДИЛКУ ---
+        # ОТПРАВКА УВЕДОМЛЕНИЯ ВО ФЛУДИЛКУ
         if new_people:
-            # Сначала объединяем список в одну строку
             people_list_str = "\n".join(new_people)
-            
-            # Теперь вставляем уже готовую строку в f-string
             msg = (
                 f"⚡️ <b>Новая регистрация в ЛК!</b>\n\n"
                 f"{people_list_str}\n\n"
@@ -233,9 +230,9 @@ async def update_titles():
                     message_thread_id=THREAD_ID
                 )
             except Exception as e:
-                logger.error(f"Ошибка отправки уведомления во флудилку: {e}")
+                logger.error(f"Ошибка отправки уведомления: {e}")
 
-        # 4. Основной цикл: обновление титулов в NRMS (без изменений)
+        # 4. Основной цикл обновления титулов в NRMS
         headers = login_5verst()
         if not headers:
             return
@@ -249,25 +246,30 @@ async def update_titles():
                     timeout=15
                 )
                 res_data = r.json().get("result")
-                if not res_data: continue
+                if not res_data:
+                    continue
 
                 m = res_data.get("personal_best", {}).get("club_membership", {})
-                run = {"run500": "500", "run250": "250", "run100": "100", "run50": "50", "run25": "25", "run10": "10"}.get(m.get("run"), "")
-                vol = {"vol500": "500", "vol250": "250", "vol100": "100", "vol50": "50", "vol25": "25", "vol10": "10"}.get(m.get("volunteer"), "")
+                run_map = {"run500": "500", "run250": "250", "run100": "100", "run50": "50", "run25": "25", "run10": "10"}
+                vol_map = {"vol500": "500", "vol250": "250", "vol100": "100", "vol50": "50", "vol25": "25", "vol10": "10"}
+                
+                run = run_map.get(m.get("run"), "")
+                vol = vol_map.get(m.get("volunteer"), "")
 
                 badges = [b for b in [run, vol] if b]
                 title = f"Клуб {'|'.join(badges)}" if badges else "Новичок"
 
+                # Обновляем в Telegram
                 uid = int(tg_id)
                 try:
                     await bot.promote_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=uid, can_manage_chat=True)
-                except: pass
+                except:
+                    pass
 
                 await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
                 await asyncio.sleep(0.8)
             except Exception as e:
-                logger.warning(f"Ошибка обновления титула для {tg_id}: {e}")
-
+                logger.warning(f"Не удалось обновить титул для {tg_id}: {e}")
 # ========================= КНОПКА ЛК =========================
 async def send_profile_button():
     bot = Bot(token=TOKEN)
