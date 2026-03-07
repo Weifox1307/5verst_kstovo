@@ -207,9 +207,13 @@ async def update_titles():
     async with bot:
         # --- БЛОК УВЕДОМЛЕНИЯ ВО ФЛУДИЛКУ ---
         if new_people:
+            # Сначала объединяем список в одну строку
+            people_list_str = "\n".join(new_people)
+            
+            # Теперь вставляем уже готовую строку в f-string
             msg = (
                 f"⚡️ <b>Новая регистрация в ЛК!</b>\n\n"
-                f"{'\n'.join(new_people)}\n\n"
+                f"{people_list_str}\n\n"
                 f"<i>Бот приступает к обновлению титулов...</i>"
             )
             try:
@@ -217,7 +221,7 @@ async def update_titles():
                     chat_id=int(TARGET_CHAT_ID),
                     text=msg,
                     parse_mode=ParseMode.HTML,
-                    message_thread_id=THREAD_ID # Отправит в ту же ветку, где бот обычно пишет
+                    message_thread_id=THREAD_ID
                 )
             except Exception as e:
                 logger.error(f"Ошибка отправки уведомления во флудилку: {e}")
