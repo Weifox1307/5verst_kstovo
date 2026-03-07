@@ -195,8 +195,11 @@ async def update_titles():
                         member = await temp_bot.get_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=int(f_tg_id))
                         user = member.user
                         first_name = user.first_name or "Участник"
+                        last_name = f" {user.last_name}" if user.last_name else ""
+                        full_name = f"{first_name}{last_name}"
+
                         username = f" (@{user.username})" if user.username else ""
-                        display_name = f"{first_name}{username}"
+                        display_name = f"{full_name}{username}"
                     except Exception:
                         display_name = f"Участник {f_tg_id}"
                     
