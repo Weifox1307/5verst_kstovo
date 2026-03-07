@@ -1,0 +1,30 @@
+name: 8 March Congrats
+
+on:
+  schedule:
+    # Запуск 8 марта в 06:00 UTC (09:00 по МСК)
+    - cron: '0 6 8 3 *'
+  workflow_dispatch: # Чтобы ты мог протестировать вручную прямо сейчас
+
+jobs:
+  congratulate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/set_up-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install python-telegram-bot
+
+      - name: Send Message
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+          # В секретах укажи ID чата. Если их несколько, пиши через запятую: -1001, -1002
+          TARGET_CHAT_IDS: ${{ secrets.TARGET_CHAT_ID }} 
+          THREAD_ID: ${{ secrets.THREAD_ID }}
+        run: python congrats.py
