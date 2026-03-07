@@ -230,16 +230,17 @@ async def update_titles():
 # ========================= КНОПКА ЛК =========================
 async def send_profile_button():
     bot = Bot(token=TOKEN)
+    # Используем обычную URL-кнопку вместо WebAppInfo, чтобы избежать ошибки валидации
     url = "https://weifox1307.github.io/5verst_kstovo/"
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(text="Мой профиль 🧡", web_app=WebAppInfo(url=url))
+        InlineKeyboardButton(text="Мой профиль 🧡", url=url)
     ]])
     
     text = (
         "🧡 <b>Личный кабинет участника</b>\n\n"
         "Здесь ты можешь привязать свой ID 5 вёрст, чтобы бот автоматически обновлял твои "
         "клубные титулы (25, 50, 100 стартов и т.д.)!\n\n"
-        "<i>После привязки титул обновится в течение некоторого времени.</i>"
+        "<i>После привязки в форме титул обновится при следующем запуске бота.</i>"
     )
     
     async with bot:
@@ -251,7 +252,6 @@ async def send_profile_button():
             message_thread_id=THREAD_ID
         )
         logger.info("Кнопка профиля отправлена в чат.")
-
 # ========================= ЛОГИКА РЕЗУЛЬТАТОВ =========================
 def get_results_data(date_str):
     url_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
