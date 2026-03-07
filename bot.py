@@ -638,7 +638,7 @@ async def main():
     elif m == "--weather": await send_weather_forecast()
     elif m == "--birthdays": await check_birthdays("day")
     elif m == "--birthdays-month": await check_birthdays("month")
-    elif m == "--birthdays-week": await check_birthdays("week")
+    elif melif m == "--birthdays-week": await check_birthdays("week")
     elif m == "--results": await send_results()
     elif m == "--vk-check": await check_new_vk_members()
     elif m == "--stats": await send_weekly_stats()
