@@ -162,51 +162,63 @@ async def update_vk_status():
         logger.error(f"Ошибка ВК API: {e}")
 
 
-# ========================= ЛОГИКА ТИТУЛОВ =========================
+# ========================= ЛОГИКА ТИТУЛОВ (ОБНОВЛЕННАЯ) =========================
 async def update_titles():
     logger.info("--- ОБНОВЛЕНИЕ ТИТУЛОВ ---")
 
+    # 1. Загружаем существующий кэш (связки TG ID -> V5 ID)
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            cache = json.load(f)
+            full_cache = json.load(f)
     else:
-        cache = {str(TARGET_CHAT_ID): {}}
+        full_cache = {str(TARGET_CHAT_ID): {}}
 
-    valid_chat_members = set()
+    # Кэш для текущего чата
+    chat_cache = full_cache.get(str(TARGET_CHAT_ID), {})
 
+    # 2. Читаем таблицу с ID Телеграм (из ссылки https://docs.google.com/spreadsheets/d/16DOKNgdWfjHfZ9_FZhRz1i__ZBVdsozZcK6eFUNzgEs/...)
+    # В этой таблице: A - id, B - name, C - username
+    valid_tg_ids = set()
     try:
-        res_base = requests.get(SHEET_BASE_URL, timeout=20)
-        df_base = pd.read_csv(StringIO(res_base.text), encoding="utf-8")
-        for _, row in df_base.iterrows():
-            tg_id = extract_id(row.iloc[0])
+        res_ids = requests.get(SHEET_BASE_URL, timeout=20) # SHEET_BASE_URL должен указывать на CSV этой таблицы
+        df_ids = pd.read_csv(StringIO(res_ids.text), encoding="utf-8")
+        for _, row in df_ids.iterrows():
+            tg_id = extract_id(row.iloc[0]) # Колонка 'id'
             if tg_id:
-                valid_chat_members.add(str(tg_id))
+                valid_tg_ids.add(str(tg_id))
     except Exception as e:
-        logger.error(f"Ошибка Sheet1: {e}")
+        logger.error(f"Ошибка при чтении таблицы ID: {e}")
 
+    # 3. Читаем таблицу с ответами формы (если кто-то заполнил новую форму)
+    # Предположим, там: A - Timestamp, B - TG ID, C - V5 ID
     try:
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
         df_form = pd.read_csv(StringIO(res_form.text), encoding="utf-8")
         for _, row in df_form.iterrows():
-            f_tg_id = extract_id(row.iloc[1])
-            f_v5_id = extract_id(row.iloc[2])
-            if f_tg_id and f_v5_id and f_tg_id in valid_chat_members:
-                if str(TARGET_CHAT_ID) not in cache:
-                    cache[str(TARGET_CHAT_ID)] = {}
-                cache[str(TARGET_CHAT_ID)][str(f_tg_id)] = int(f_v5_id)
+            f_tg_id = extract_id(row.iloc[1]) # TG ID
+            f_v5_id = extract_id(row.iloc[2]) # V5 ID
+            if f_tg_id and f_v5_id:
+                chat_cache[str(f_tg_id)] = int(f_v5_id)
     except Exception as e:
-        logger.error(f"Ошибка формы: {e}")
+        logger.error(f"Ошибка при чтении таблицы формы: {e}")
 
+    # Сохраняем обновленный кэш обратно
+    full_cache[str(TARGET_CHAT_ID)] = chat_cache
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=2, ensure_ascii=False)
+        json.dump(full_cache, f, indent=2, ensure_ascii=False)
 
+    # 4. Авторизация в NRMS и обновление титулов
     headers = login_5verst()
     if not headers:
         return
 
     bot = Bot(token=TOKEN)
     async with bot:
-        for tg_id, v5_id in cache.get(str(TARGET_CHAT_ID), {}).items():
+        for tg_id, v5_id in chat_cache.items():
+            # Обновляем титул только если пользователь есть в списке участников (valid_tg_ids)
+            if tg_id not in valid_tg_ids:
+                continue
+                
             try:
                 r = requests.post(
                     "https://nrms.5verst.ru/api/v1/website/athlete/statById",
@@ -214,38 +226,26 @@ async def update_titles():
                     headers=headers,
                     timeout=15
                 )
-                stats = r.json().get("result")
-                if not stats:
-                    continue
+                res_data = r.json().get("result")
+                if not res_data: continue
 
-                m = stats.get("personal_best", {}).get("club_membership", {})
-                run = {"run500": "500", "run250": "250", "run100": "100",
-                       "run50": "50", "run25": "25", "run10": "10"}.get(m.get("run"), "")
-                vol = {"vol500": "500", "vol250": "250", "vol100": "100",
-                       "vol50": "50", "vol25": "25", "vol10": "10"}.get(m.get("volunteer"), "")
+                m = res_data.get("personal_best", {}).get("club_membership", {})
+                run = {"run500": "500", "run250": "250", "run100": "100", "run50": "50", "run25": "25", "run10": "10"}.get(m.get("run"), "")
+                vol = {"vol500": "500", "vol250": "250", "vol100": "100", "vol50": "50", "vol25": "25", "vol10": "10"}.get(m.get("volunteer"), "")
 
                 badges = [b for b in [run, vol] if b]
                 title = f"Клуб {'|'.join(badges)}" if badges else "Новичок"
 
                 uid = int(tg_id)
+                # Пытаемся назначить админом (нужно для титула)
                 try:
-                    await bot.promote_chat_member(
-                        chat_id=int(TARGET_CHAT_ID),
-                        user_id=uid,
-                        can_manage_chat=True,
-                        can_invite_users=True
-                    )
-                except:
-                    pass
+                    await bot.promote_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=uid, can_manage_chat=True)
+                except: pass
 
-                await bot.set_chat_administrator_custom_title(
-                    chat_id=int(TARGET_CHAT_ID),
-                    user_id=uid,
-                    custom_title=title
-                )
-                await asyncio.sleep(0.8)
+                await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
+                await asyncio.sleep(0.8) # Защита от спам-фильтра Telegram
             except Exception as e:
-                logger.warning(f"Ошибка для {tg_id}: {e}")
+                logger.warning(f"Ошибка обновления титула для {tg_id}: {e}")
 
 
 # ========================= ЛОГИКА РЕЗУЛЬТАТОВ =========================
