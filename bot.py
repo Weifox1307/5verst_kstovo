@@ -166,6 +166,7 @@ async def update_vk_status():
 async def update_titles():
     logger.info("--- ОБНОВЛЕНИЕ ТИТУЛОВ ---")
 
+    # 1. Загружаем существующий кэш
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             full_cache = json.load(f)
@@ -173,31 +174,59 @@ async def update_titles():
         full_cache = {str(TARGET_CHAT_ID): {}}
 
     chat_cache = full_cache.get(str(TARGET_CHAT_ID), {})
+    new_people = [] # Список для уведомления во флудилку
 
-    # Читаем таблицу с ответами формы (самый приоритетный источник для новых привязок)
+    # 2. Читаем таблицу с ответами формы
     try:
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
         df_form = pd.read_csv(StringIO(res_form.text), encoding="utf-8")
+        
         for _, row in df_form.iterrows():
-            f_tg_id = extract_id(row.iloc[1]) # Столбец с TG ID
-            f_v5_id = extract_id(row.iloc[2]) # Столбец с V5 ID
+            f_tg_id = extract_id(row.iloc[1]) # Столбец с Telegram ID
+            f_v5_id = extract_id(row.iloc[2]) # Столбец с ID 5 вёрст
+            
             if f_tg_id and f_v5_id:
+                # Если этого человека еще нет в кэше — он новый!
+                if str(f_tg_id) not in chat_cache:
+                    # Добавляем в список для уведомления
+                    user_link = f"<a href='tg://user?id={f_tg_id}'>Участник</a>"
+                    new_people.append(f"• {user_link} (ID: {f_v5_id})")
+                
+                # Обновляем кэш
                 chat_cache[str(f_tg_id)] = int(f_v5_id)
-                logger.info(f"Привязка из формы: {f_tg_id} -> {f_v5_id}")
+                
     except Exception as e:
         logger.error(f"Ошибка при чтении таблицы формы: {e}")
 
-    # Сохраняем обновленный кэш
+    # 3. Сохраняем обновленный кэш обратно в файл
     full_cache[str(TARGET_CHAT_ID)] = chat_cache
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(full_cache, f, indent=2, ensure_ascii=False)
 
-    headers = login_5verst()
-    if not headers:
-        return
-
     bot = Bot(token=TOKEN)
     async with bot:
+        # --- БЛОК УВЕДОМЛЕНИЯ ВО ФЛУДИЛКУ ---
+        if new_people:
+            msg = (
+                f"⚡️ <b>Новая регистрация в ЛК!</b>\n\n"
+                f"{'\n'.join(new_people)}\n\n"
+                f"<i>Бот приступает к обновлению титулов...</i>"
+            )
+            try:
+                await bot.send_message(
+                    chat_id=int(TARGET_CHAT_ID),
+                    text=msg,
+                    parse_mode=ParseMode.HTML,
+                    message_thread_id=THREAD_ID # Отправит в ту же ветку, где бот обычно пишет
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления во флудилку: {e}")
+
+        # 4. Основной цикл: обновление титулов в NRMS (без изменений)
+        headers = login_5verst()
+        if not headers:
+            return
+
         for tg_id, v5_id in chat_cache.items():
             try:
                 r = requests.post(
@@ -222,7 +251,6 @@ async def update_titles():
                 except: pass
 
                 await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
-                logger.info(f"Обновлен титул {tg_id}: {title}")
                 await asyncio.sleep(0.8)
             except Exception as e:
                 logger.warning(f"Ошибка обновления титула для {tg_id}: {e}")
