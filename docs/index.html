@@ -7,49 +7,71 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         body {
-            font-family: sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background-color: var(--tg-theme-bg-color, #ffffff);
             color: var(--tg-theme-text-color, #000000);
             display: flex;
             justify-content: center;
             padding: 20px;
+            margin: 0;
         }
         .container {
             width: 100%;
             max-width: 400px;
             background: var(--tg-theme-secondary-bg-color, #f0f0f0);
-            padding: 20px;
-            border-radius: 15px;
+            padding: 25px;
+            border-radius: 20px;
             text-align: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
         }
+        h2 { color: #FF8D00; margin-top: 0; }
+        .input-group { text-align: left; margin-bottom: 15px; }
+        label { font-size: 14px; font-weight: bold; margin-left: 5px; }
         input {
             width: 100%;
-            padding: 12px;
-            margin: 10px 0;
+            padding: 14px;
+            margin: 8px 0;
             border: 1px solid #ccc;
-            border-radius: 8px;
+            border-radius: 12px;
             box-sizing: border-box;
+            background: var(--tg-theme-bg-color);
+            color: var(--tg-theme-text-color);
+            font-size: 16px;
         }
         button {
             width: 100%;
-            padding: 15px;
+            padding: 16px;
             background-color: #FF8D00;
             color: white;
             border: none;
-            border-radius: 10px;
+            border-radius: 12px;
             font-weight: bold;
+            font-size: 16px;
             cursor: pointer;
+            transition: opacity 0.2s;
         }
+        button:disabled { opacity: 0.5; }
     </style>
 </head>
 <body>
     <div class="container">
         <h2>5 вёрст Кстово</h2>
-        <p>Привязка ID и Дня рождения</p>
+        <p style="font-size: 14px; margin-bottom: 20px;">Привязка ID и Дня рождения</p>
         
-        <input type="number" id="v5_id" placeholder="ID 5 вёрст">
-        <input type="text" id="birthday" placeholder="День рождения (ДД.ММ)">
-        <input type="text" id="name" placeholder="Ваше Имя">
+        <div class="input-group">
+            <label>ID 5 вёрст</label>
+            <input type="text" id="v5_id" placeholder="Напр: A790217375 или 790217375">
+        </div>
+
+        <div class="input-group">
+            <label>День рождения</label>
+            <input type="text" id="birthday" placeholder="ДД.ММ или ДД.ММ.ГГГГ">
+        </div>
+
+        <div class="input-group">
+            <label>Ваше Имя</label>
+            <input type="text" id="name" placeholder="Иван Иванов">
+        </div>
         
         <button id="sendData">Сохранить данные</button>
     </div>
@@ -59,28 +81,31 @@
         tg.expand();
         tg.ready();
 
-        const WEB_APP_URL = "https://script.google.com/macros/s/AKfycby-hKQSo_cUvsNBmwISGSPAwiWB7p_7X4L96OBn4m89gy1MsQ59TD8HXjV6jVCRoTDboA/exec";
+        const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbw5okZ40OAjR83-nIt47OnqTmaFV44rFMFC9LN22FA8adI26iSxqvZWMojDWTEtRDZE/exec";
 
-        document.getElementById('sendData').addEventListener('click', () => {
-            const v5_id = document.getElementById('v5_id').value.trim();
+        document.getElementById('sendData').addEventListener('click', function() {
+            let rawV5Id = document.getElementById('v5_id').value.trim();
             const birthday = document.getElementById('birthday').value.trim();
             const name = document.getElementById('name').value.trim();
             const tg_user = tg.initDataUnsafe.user;
 
-            if(!v5_id || !name) {
+            if(!rawV5Id || !name) {
                 tg.showAlert("Пожалуйста, заполни ID и Имя");
                 return;
             }
 
+            // Очистка ID: убираем букву A (английскую или русскую) и оставляем только цифры
+            const cleanV5Id = rawV5Id.replace(/[AaАа]/g, '');
+
             const payload = {
                 tg_id: tg_user ? String(tg_user.id) : "unknown",
                 username: tg_user && tg_user.username ? tg_user.username : "",
-                v5_id: v5_id,
+                v5_id: cleanV5Id,
                 name: name,
                 birthday: birthday
             };
 
-            const btn = document.getElementById('sendData');
+            const btn = this;
             btn.disabled = true;
             btn.innerText = "Отправка...";
 
@@ -93,14 +118,14 @@
             .then(() => {
                 tg.showPopup({
                     title: 'Успешно!',
-                    message: 'Данные отправлены!',
+                    message: 'Данные отправлены! ID записан без буквы А для корректной работы титулов.',
                     buttons: [{type: 'ok'}]
                 }, () => {
                     tg.close();
                 });
             })
             .catch(err => {
-                alert("Ошибка: " + err);
+                tg.showAlert("Ошибка: " + err);
                 btn.disabled = false;
                 btn.innerText = "Попробовать снова";
             });
