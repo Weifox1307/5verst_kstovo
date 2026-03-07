@@ -1,11 +1,134 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>5 вёрст в парке Юбилейный | Кстово</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --v5-orange: #FF8D00;
+            --v5-dark: #2c2c2c;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--tg-theme-bg-color, #f5f5f5);
+            color: var(--tg-theme-text-color, #222);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+        }
+        .card {
+            background: var(--tg-theme-secondary-bg-color, #fff);
+            padding: 25px;
+            border-radius: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 400px;
+            box-sizing: border-box;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        h2 {
+            color: var(--v5-orange);
+            margin: 10px 0;
+            font-size: 20px;
+        }
+        .input-group {
+            margin-bottom: 15px;
+            text-align: left;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #eee;
+            border-radius: 12px;
+            box-sizing: border-box;
+            outline: none;
+            transition: 0.3s;
+            background: var(--tg-theme-bg-color);
+            color: var(--tg-theme-text-color);
+            font-size: 16px;
+        }
+        input:focus {
+            border-color: var(--v5-orange);
+        }
+        .btn {
+            background: var(--v5-orange);
+            color: white;
+            border: none;
+            width: 100%;
+            padding: 16px;
+            border-radius: 14px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: opacity 0.2s;
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .hint {
+            font-size: 12px;
+            color: #888;
+            margin-top: 15px;
+            text-align: center;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <div class="header">
+        <h2>5 вёрст Кстово</h2>
+        <p style="margin: 0; font-size: 14px; opacity: 0.8;">Привязка данных для титулов и ДР</p>
+    </div>
+
+    <div class="input-group">
+        <label for="v5_id">ID 5 вёрст</label>
+        <input type="number" id="v5_id" placeholder="Напр: 1007901" inputmode="numeric">
+    </div>
+
+    <div class="input-group">
+        <label for="birthday">Дата рождения</label>
+        <input type="text" id="birthday" placeholder="ДД.ММ (напр: 15.05)">
+    </div>
+
+    <div class="input-group">
+        <label for="name">Ваше имя и фамилия</label>
+        <input type="text" id="name" placeholder="Иван Иванов">
+    </div>
+
+    <button class="btn" id="sendData">Сохранить данные</button>
+    
+    <p class="hint">
+        Ваш Telegram ID и Username подтянутся автоматически для связки данных.
+    </p>
+</div>
+
 <script>
     const tg = window.Telegram.WebApp;
-    tg.expand(); // Развернуть на весь экран
+    tg.expand();
     tg.ready();
 
+    // Ссылка на твой Google Apps Script
     const WEB_APP_URL = "https://script.google.com/macros/s/AKfycby-hKQSo_cUvsNBmwISGSPAwiWB7p_7X4L96OBn4m89gy1MsQ59TD8HXjV6jVCRoTDboA/exec";
 
-    document.getElementById('sendData').addEventListener('click', () => {
+    document.getElementById('sendData').addEventListener('click', function() {
         const v5_id = document.getElementById('v5_id').value.trim();
         const birthday = document.getElementById('birthday').value.trim();
         const name = document.getElementById('name').value.trim();
@@ -16,6 +139,10 @@
             return;
         }
 
+        const btn = this;
+        btn.disabled = true;
+        btn.innerText = "Отправка...";
+
         const payload = {
             tg_id: tg_user ? String(tg_user.id) : "unknown",
             username: tg_user && tg_user.username ? tg_user.username : "",
@@ -24,15 +151,10 @@
             birthday: birthday
         };
 
-        // Визуальная обратная связь
-        const btn = document.getElementById('sendData');
-        btn.disabled = true;
-        btn.innerText = "Отправка...";
-
-        // Отправляем данные в Google Таблицу
+        // Отправляем данные
         fetch(WEB_APP_URL, {
             method: 'POST',
-            mode: 'no-cors', // Важно для Google Scripts
+            mode: 'no-cors',
             cache: 'no-cache',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -40,8 +162,8 @@
         .then(() => {
             tg.showPopup({
                 title: 'Успешно!',
-                message: 'Твои данные разложены по полочкам: ID привязан, а день рождения записан. Титул обновится при следующем запуске бота.',
-                buttons: [{type: 'ok', text: 'Круто!'}]
+                message: 'Данные отправлены. Теперь они попадут в нужные таблицы.',
+                buttons: [{type: 'ok', text: 'Отлично'}]
             }, () => {
                 tg.close();
             });
@@ -49,7 +171,10 @@
         .catch(err => {
             btn.disabled = false;
             btn.innerText = "Попробовать снова";
-            alert("Ошибка отправки: " + err);
+            tg.showAlert("Ошибка: " + err);
         });
     });
 </script>
+
+</body>
+</html>
