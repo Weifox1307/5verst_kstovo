@@ -173,31 +173,50 @@ async def update_titles():
         full_cache = {str(TARGET_CHAT_ID): {}}
 
     chat_cache = full_cache.get(str(TARGET_CHAT_ID), {})
+    new_registrations = [] # Список для новых людей
 
-    # Читаем таблицу с ответами формы (самый приоритетный источник для новых привязок)
+    # Читаем таблицу с ответами формы
     try:
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
         df_form = pd.read_csv(StringIO(res_form.text), encoding="utf-8")
         for _, row in df_form.iterrows():
-            f_tg_id = extract_id(row.iloc[1]) # Столбец с TG ID
-            f_v5_id = extract_id(row.iloc[2]) # Столбец с V5 ID
+            f_tg_id = extract_id(row.iloc[1]) # TG ID
+            f_v5_id = extract_id(row.iloc[2]) # V5 ID
+            
             if f_tg_id and f_v5_id:
+                # Если этого TG ID еще нет в кэше — значит это новый пользователь!
+                if str(f_tg_id) not in chat_cache:
+                    new_registrations.append(f"👤 <a href='tg://user?id={f_tg_id}'>Участник</a> (ID: {f_v5_id})")
+                
                 chat_cache[str(f_tg_id)] = int(f_v5_id)
-                logger.info(f"Привязка из формы: {f_tg_id} -> {f_v5_id}")
     except Exception as e:
         logger.error(f"Ошибка при чтении таблицы формы: {e}")
 
-    # Сохраняем обновленный кэш
+    # Сохраняем кэш
     full_cache[str(TARGET_CHAT_ID)] = chat_cache
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(full_cache, f, indent=2, ensure_ascii=False)
 
-    headers = login_5verst()
-    if not headers:
-        return
-
     bot = Bot(token=TOKEN)
     async with bot:
+        # ОТПРАВКА УВЕДОМЛЕНИЯ О НОВЫХ ФОРМАХ
+        if new_registrations:
+            msg = "⚡️ <b>Новая регистрация в ЛК!</b>\n\n" + "\n".join(new_registrations) + \
+                  "\n\n<i>Бот обновит титулы при текущем прогоне.</i>"
+            try:
+                await bot.send_message(
+                    chat_id=int(TARGET_CHAT_ID),
+                    text=msg,
+                    parse_mode=ParseMode.HTML,
+                    message_thread_id=THREAD_ID # Отправит в ту же ветку, что и остальные уведомления
+                )
+            except Exception as e:
+                logger.error(f"Не удалось отправить уведомление о форме: {e}")
+
+        # ДАЛЕЕ ИДЕТ СТАНДАРТНЫЙ ЦИКЛ ОБНОВЛЕНИЯ ТИТУЛОВ В NRMS
+        headers = login_5verst()
+        if not headers: return
+        
         for tg_id, v5_id in chat_cache.items():
             try:
                 r = requests.post(
