@@ -46,6 +46,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
+          FLUD_THREAD_ID: ${{ secrets.FLUD_THREAD_ID }} # Добавляем новую
           ORGS_CHAT_ID: ${{ secrets.ORGS_CHAT_ID }}
           NRMS_USERNAME: ${{ secrets.NRMS_USERNAME }}
           NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
