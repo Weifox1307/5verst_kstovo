@@ -175,109 +175,111 @@ async def update_titles(is_manual=False):
         full_cache = {str(TARGET_CHAT_ID): {}}
 
     chat_cache = full_cache.get(str(TARGET_CHAT_ID), {})
-    new_people_links = [] # Для уведомления во флудилку
-    all_processed_people = [] # Для финального отчета при ручном запуске
-
-    # 2. Читаем таблицу с ответами формы
+    
+    # Списки для работы
+    to_notify = []  # Только те, кого РЕАЛЬНО нет в кэше
+    to_process = [] # Все, кому будем обновлять титулы
+    
+    # 2. Читаем таблицу
     try:
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
         df_form = pd.read_csv(StringIO(res_form.text), encoding="utf-8")
         
-        bot = Bot(token=TOKEN)
+        # Убираем дубликаты по TG ID из таблицы, оставляя последние записи
+        df_form = df_form.drop_duplicates(subset=[df_form.columns[1]], keep='last')
+        
+        temp_bot = Bot(token=TOKEN)
         
         for _, row in df_form.iterrows():
-            f_tg_id = extract_id(row.iloc[1])
-            f_v5_id = extract_id(row.iloc[2])
+            f_tg_id = str(extract_id(row.iloc[1]))
+            f_v5_id = str(extract_id(row.iloc[2]))
             
-            if f_tg_id and f_v5_id:
-                tg_id_str = str(f_tg_id)
+            if not f_tg_id or not f_v5_id:
+                continue
+
+            # Проверяем: новый ли это человек для бота?
+            is_new = f_tg_id not in chat_cache
+            
+            # Если новый ИЛИ мы запустили вручную — готовим к обработке
+            if is_new or is_manual:
+                try:
+                    member = await temp_bot.get_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=int(f_tg_id))
+                    u = member.user
+                    name = f"{u.first_name or 'Участник'}{f' {u.last_name}' if u.last_name else ''}"
+                    user_label = f"<a href='tg://user?id={f_tg_id}'>{name}</a>{f' (@{u.username})' if u.username else ''}"
+                except:
+                    user_label = f"Участник (ID: {f_tg_id})"
+
+                person_data = {"tg_id": f_tg_id, "v5_id": f_v5_id, "label": user_label}
+                to_process.append(person_data)
                 
-                # Если юзера нет в кэше или запущен ручной режим
-                is_new = tg_id_str not in chat_cache
-                if is_new or is_manual:
-                    try:
-                        member = await bot.get_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=int(f_tg_id))
-                        user = member.user
-                        display_name = f"{user.first_name or 'Участник'}{f' {user.last_name}' if user.last_name else ''}"
-                        username = f" (@{user.username})" if user.username else ""
-                        full_display = f"{display_name}{username}"
-                    except Exception:
-                        full_display = f"Участник {f_tg_id}"
-                    
-                    user_link = f"<a href='tg://user?id={f_tg_id}'>{full_display}</a>"
-                    
-                    if is_new:
-                        new_people_links.append(f"• {user_link} (ID: {f_v5_id})")
-                    
-                    all_processed_people.append({"link": user_link, "tg_id": tg_id_str, "v5_id": f_v5_id})
+                if is_new:
+                    to_notify.append(f"• {user_label} (ID: {f_v5_id})")
                 
-                # Обновляем кэш
-                chat_cache[tg_id_str] = int(f_v5_id)
+                # Сразу помечаем в кэше, чтобы не спамить в следующий раз
+                chat_cache[f_tg_id] = int(f_v5_id)
 
     except Exception as e:
-        logger.error(f"Ошибка при чтении таблицы формы: {e}")
+        logger.error(f"Ошибка парсинга таблицы: {e}")
 
-    # 3. Сохраняем кэш
+    # 3. Сохраняем обновленный кэш
     full_cache[str(TARGET_CHAT_ID)] = chat_cache
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(full_cache, f, indent=2, ensure_ascii=False)
 
-    async with bot:
-        # ОТПРАВКА УВЕДОМЛЕНИЯ О НОВЫХ РЕГИСТРАЦИЯХ
-        if new_people_links:
-            msg = f"⚡️ <b>Новая регистрация в ЛК!</b>\n\n" + "\n".join(new_people_links) + "\n\n<i>Бот приступает к обновлению титулов...</i>"
+    # 4. Отправляем уведомление, если есть новички
+    async with Bot(token=TOKEN) as bot:
+        if to_notify:
+            msg = "⚡️ <b>Новая регистрация в ЛК!</b>\n\n" + "\n".join(to_notify) + "\n\n<i>Бот приступает к обновлению титулов...</i>"
             try:
                 target_thread = int(FLUD_THREAD_ID) if FLUD_THREAD_ID else THREAD_ID
                 await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=msg, parse_mode=ParseMode.HTML, message_thread_id=target_thread)
             except Exception as e:
-                logger.error(f"Ошибка отправки уведомления: {e}")
+                logger.error(f"Ошибка уведомления: {e}")
 
-        # 4. Основной цикл обновления титулов
+        # 5. Цикл NRMS и Титулов
         headers = login_5verst()
-        if not headers: return
+        if not headers or not to_process:
+            return
 
-        # Определяем, кого обрабатывать (всех при manual или только новых)
-        targets = all_processed_people if is_manual else [{"tg_id": t, "v5_id": v} for t, v in chat_cache.items() if any(t in link for link in new_people_links)]
-
-        for person in targets:
-            tg_id = person['tg_id']
-            v5_id = person['v5_id']
+        for p in to_process:
             try:
-                r = requests.post("https://nrms.5verst.ru/api/v1/website/athlete/statById", json={"id": v5_id}, headers=headers, timeout=15)
-                res_data = r.json().get("result")
-                if not res_data: continue
+                # Запрос к NRMS
+                r = requests.post("https://nrms.5verst.ru/api/v1/website/athlete/statById", json={"id": p['v5_id']}, headers=headers, timeout=15)
+                res = r.json().get("result")
+                if not res: continue
 
-                m = res_data.get("personal_best", {}).get("club_membership", {})
-                # Карты клубов
+                m = res.get("personal_best", {}).get("club_membership", {})
                 run_map = {"run500": "500", "run250": "250", "run100": "100", "run50": "50", "run25": "25", "run10": "10"}
                 vol_map = {"vol500": "500", "vol250": "250", "vol100": "100", "vol50": "50", "vol25": "25", "vol10": "10"}
                 
-                run = run_map.get(m.get("run"), "")
-                vol = vol_map.get(m.get("volunteer"), "")
+                run_badge = run_map.get(m.get("run"), "")
+                vol_badge = vol_map.get(m.get("volunteer"), "")
 
-                badges = [b for b in [run, vol] if b]
-                # ЖЕСТКИЙ ФИКС НОВИЧКА: если badges пуст, гарантированно пишем "Новичок"
+                badges = [b for b in [run_badge, vol_badge] if b]
+                # ФИКС: Если нет клубов — строго "Новичок"
                 title = f"Клуб {'|'.join(badges)}" if badges else "Новичок"
 
-                uid = int(tg_id)
-                # Проверка на создателя (тебя), чтобы не было ошибок 400
+                uid = int(p['tg_id'])
+                
+                # Проверка прав (не трогаем создателя)
                 member = await bot.get_chat_member(chat_id=TARGET_CHAT_ID, user_id=uid)
-                if member.status == 'creator': continue
+                if member.status == 'creator':
+                    continue
 
-                # Назначаем админом (без прав)
+                # Даем права админа и ставим титул
                 try:
                     await bot.promote_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=uid, can_manage_chat=True)
-                except: pass
+                    await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
+                    logger.info(f"Титул '{title}' установлен для {uid}")
+                except Exception as ex:
+                    logger.warning(f"Ошибка TG для {uid}: {ex}")
 
-                # Ставим титул
-                await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
-                logger.info(f"Установлен титул {title} для {uid}")
-                
-                # ПАУЗА 2.5 секунды (анти-Flood)
-                await asyncio.sleep(2.5) 
+                # ПАУЗА 3 секунды, чтобы Telegram не ругался (Flood Control)
+                await asyncio.sleep(3)
+
             except Exception as e:
-                logger.warning(f"Ошибка титула для {tg_id}: {e}")
-
+                logger.error(f"Общая ошибка для {p['tg_id']}: {e}")
         # 5. Если запуск ручной — выводим отчет
         if is_manual and all_processed_people:
             report = "📊 <b>Финальный отчет по титулам:</b>\n\n" + "\n".join([f"• {p['link']} — обновлен" for p in all_processed_people])
