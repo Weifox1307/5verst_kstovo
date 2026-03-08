@@ -176,33 +176,36 @@ async def update_titles(is_manual=False):
 
     chat_cache = full_cache.get(str(TARGET_CHAT_ID), {})
     
-    # Списки для работы
-    to_notify = []  # Только те, кого РЕАЛЬНО нет в кэше
-    to_process = [] # Все, кому будем обновлять титулы
+    to_notify = []  # Список для сообщения "Новая регистрация"
+    to_process = [] # Список для обновления титулов
     
     # 2. Читаем таблицу
     try:
         res_form = requests.get(SHEET_FORM_URL, timeout=20)
         df_form = pd.read_csv(StringIO(res_form.text), encoding="utf-8")
         
-        # Убираем дубликаты по TG ID из таблицы, оставляя последние записи
+        # ЧИСТИМ ДУБЛИКАТЫ: оставляем только последнюю регистрацию для каждого TG ID
         df_form = df_form.drop_duplicates(subset=[df_form.columns[1]], keep='last')
         
         temp_bot = Bot(token=TOKEN)
         
         for _, row in df_form.iterrows():
-            f_tg_id = str(extract_id(row.iloc[1]))
-            f_v5_id = str(extract_id(row.iloc[2]))
+            f_tg_id_raw = extract_id(row.iloc[1])
+            f_v5_id_raw = extract_id(row.iloc[2])
             
-            if not f_tg_id or not f_v5_id:
+            # Пропускаем, если ID пустые (защита от "None")
+            if f_tg_id_raw is None or f_v5_id_raw is None:
                 continue
+                
+            f_tg_id = str(f_tg_id_raw)
+            f_v5_id = str(f_v5_id_raw)
 
-            # Проверяем: новый ли это человек для бота?
+            # Человек считается новым, если его НЕТ в кэше
             is_new = f_tg_id not in chat_cache
             
-            # Если новый ИЛИ мы запустили вручную — готовим к обработке
             if is_new or is_manual:
                 try:
+                    # Пытаемся получить инфу о юзере для красивого вывода
                     member = await temp_bot.get_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=int(f_tg_id))
                     u = member.user
                     name = f"{u.first_name or 'Участник'}{f' {u.last_name}' if u.last_name else ''}"
@@ -210,25 +213,19 @@ async def update_titles(is_manual=False):
                 except:
                     user_label = f"Участник (ID: {f_tg_id})"
 
-                person_data = {"tg_id": f_tg_id, "v5_id": f_v5_id, "label": user_label}
-                to_process.append(person_data)
+                # Добавляем в очередь на титулы
+                to_process.append({"tg_id": f_tg_id, "v5_id": f_v5_id, "label": user_label})
                 
+                # Добавляем в уведомление, если человек реально новый
                 if is_new:
                     to_notify.append(f"• {user_label} (ID: {f_v5_id})")
-                
-                # Сразу помечаем в кэше, чтобы не спамить в следующий раз
-                chat_cache[f_tg_id] = int(f_v5_id)
 
     except Exception as e:
         logger.error(f"Ошибка парсинга таблицы: {e}")
 
-    # 3. Сохраняем обновленный кэш
-    full_cache[str(TARGET_CHAT_ID)] = chat_cache
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(full_cache, f, indent=2, ensure_ascii=False)
-
-    # 4. Отправляем уведомление, если есть новички
+    # 3. Работаем с Telegram
     async with Bot(token=TOKEN) as bot:
+        # Сначала уведомление о новых людях
         if to_notify:
             msg = "⚡️ <b>Новая регистрация в ЛК!</b>\n\n" + "\n".join(to_notify) + "\n\n<i>Бот приступает к обновлению титулов...</i>"
             try:
@@ -237,7 +234,7 @@ async def update_titles(is_manual=False):
             except Exception as e:
                 logger.error(f"Ошибка уведомления: {e}")
 
-        # 5. Цикл NRMS и Титулов
+        # 4. Цикл обновления титулов
         headers = login_5verst()
         if not headers or not to_process:
             return
@@ -257,33 +254,36 @@ async def update_titles(is_manual=False):
                 vol_badge = vol_map.get(m.get("volunteer"), "")
 
                 badges = [b for b in [run_badge, vol_badge] if b]
-                # ФИКС: Если нет клубов — строго "Новичок"
+                # ЖЕСТКИЙ ФИКС: если нет клубов — строго "Новичок"
                 title = f"Клуб {'|'.join(badges)}" if badges else "Новичок"
 
                 uid = int(p['tg_id'])
                 
-                # Проверка прав (не трогаем создателя)
+                # Не трогаем создателя (тебя)
                 member = await bot.get_chat_member(chat_id=TARGET_CHAT_ID, user_id=uid)
                 if member.status == 'creator':
+                    # Сразу в кэш, чтобы больше не проверять
+                    chat_cache[p['tg_id']] = int(p['v5_id'])
                     continue
 
-                # Даем права админа и ставим титул
-                try:
-                    await bot.promote_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=uid, can_manage_chat=True)
-                    await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
-                    logger.info(f"Титул '{title}' установлен для {uid}")
-                except Exception as ex:
-                    logger.warning(f"Ошибка TG для {uid}: {ex}")
+                # Даем права и ставим титул
+                await bot.promote_chat_member(chat_id=int(TARGET_CHAT_ID), user_id=uid, can_manage_chat=True)
+                await bot.set_chat_administrator_custom_title(chat_id=int(TARGET_CHAT_ID), user_id=uid, custom_title=title)
+                
+                # ТОЛЬКО ПОСЛЕ УСПЕХА ЗАПИСЫВАЕМ В КЭШ
+                chat_cache[p['tg_id']] = int(p['v5_id'])
+                logger.info(f"Титул '{title}' установлен для {uid}")
 
-                # ПАУЗА 3 секунды, чтобы Telegram не ругался (Flood Control)
+                # ПАУЗА 3 секунды (ВАЖНО против Flood Control!)
                 await asyncio.sleep(3)
 
             except Exception as e:
-                logger.error(f"Общая ошибка для {p['tg_id']}: {e}")
-        # 5. Если запуск ручной — выводим отчет
-        if is_manual and all_processed_people:
-            report = "📊 <b>Финальный отчет по титулам:</b>\n\n" + "\n".join([f"• {p['link']} — обновлен" for p in all_processed_people])
-            await bot.send_message(chat_id=int(TARGET_CHAT_ID), text=report, parse_mode=ParseMode.HTML, message_thread_id=THREAD_ID)
+                logger.error(f"Ошибка для {p['tg_id']}: {e}")
+
+    # 5. Сохраняем кэш В КОНЦЕ
+    full_cache[str(TARGET_CHAT_ID)] = chat_cache
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(full_cache, f, indent=2, ensure_ascii=False)
 # ========================= КНОПКА ЛК =========================
 async def send_profile_button():
     bot = Bot(token=TOKEN)
