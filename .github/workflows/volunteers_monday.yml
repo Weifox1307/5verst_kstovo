@@ -1,30 +1,30 @@
-name: Monday Volunteer Reminder
+# name: Monday Volunteer Reminder
 
-on:
-  schedule:
-    # 06:00 UTC = 09:00 МСК
-    - cron: '0 6 * * 1'
-  workflow_dispatch: 
+# on:
+#   schedule:
+#     # 06:00 UTC = 09:00 МСК
+#     - cron: '0 6 * * 1'
+#   workflow_dispatch: 
 
-jobs:
-  send_reminder:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+# jobs:
+#   send_reminder:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
+#       - name: Set up Python
+#         uses: actions/setup-python@v4
+#         with:
+#           python-version: '3.10'
 
-      - name: Install dependencies
-        # Добавлена библиотека pytz для работы с часовыми поясами
-        run: pip install python-telegram-bot pytz
+#       - name: Install dependencies
+#         # Добавлена библиотека pytz для работы с часовыми поясами
+#         run: pip install python-telegram-bot pytz
 
-      - name: Run Volunteer Script
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
-          THREAD_ID_VOLUNTEERS: ${{ secrets.THREAD_ID_VOLUNTEERS }}
-        run: python volunteers_reminder.py
+#       - name: Run Volunteer Script
+#         env:
+#           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+#           TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
+#           THREAD_ID_VOLUNTEERS: ${{ secrets.THREAD_ID_VOLUNTEERS }}
+#         run: python volunteers_reminder.py
