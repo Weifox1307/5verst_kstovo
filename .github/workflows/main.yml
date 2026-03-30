@@ -1,100 +1,100 @@
-name: 5Verst Full Automation
+# name: 5Verst Full Automation
 
-on:
-  schedule:
-    - cron: '0 5 * * 6'        # Сб 08:00 МСК — Погода
-    - cron: '*/20 7-10 * * 6'  # Сб 10:00-13:00 МСК — Результаты
-    - cron: '0 11 * * 6'       # Сб 14:00 МСК — Титулы
-    - cron: '5 6 * * *'        # Каждый день 09:05 МСК — Дни рождения
-    - cron: '0 */6 * * *'      # Каждые 6 часов — Подписчики ВК
-    - cron: '0 15 * * 5'       # Пт 18:00 МСК — Статус ВК и Титулы
-    - cron: '0 18 * * 0'       # Вс 21:00 МСК — Итоги недели
-  workflow_dispatch:           # Ручной запуск с выбором действия
-    inputs:
-      action:
-        description: 'Выберите действие для запуска'
-        required: true
-        default: 'all_critical'
-        type: choice
-        options:
-          - all_critical
-          - titles
-          - results
-          - weather
-          - send_button
-          - vk_check
+# on:
+#   schedule:
+#     - cron: '0 5 * * 6'        # Сб 08:00 МСК — Погода
+#     - cron: '*/20 7-10 * * 6'  # Сб 10:00-13:00 МСК — Результаты
+#     - cron: '0 11 * * 6'       # Сб 14:00 МСК — Титулы
+#     - cron: '5 6 * * *'        # Каждый день 09:05 МСК — Дни рождения
+#     - cron: '0 */6 * * *'      # Каждые 6 часов — Подписчики ВК
+#     - cron: '0 15 * * 5'       # Пт 18:00 МСК — Статус ВК и Титулы
+#     - cron: '0 18 * * 0'       # Вс 21:00 МСК — Итоги недели
+#   workflow_dispatch:           # Ручной запуск с выбором действия
+#     inputs:
+#       action:
+#         description: 'Выберите действие для запуска'
+#         required: true
+#         default: 'all_critical'
+#         type: choice
+#         options:
+#           - all_critical
+#           - titles
+#           - results
+#           - weather
+#           - send_button
+#           - vk_check
 
-jobs:
-  update:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+# jobs:
+#   update:
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: write
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
+#       - name: Set up Python
+#         uses: actions/setup-python@v4
+#         with:
+#           python-version: '3.10'
 
-      - name: Install dependencies
-        run: pip install python-telegram-bot requests pandas beautifulsoup4 pytz
+#       - name: Install dependencies
+#         run: pip install python-telegram-bot requests pandas beautifulsoup4 pytz
 
-      - name: Run Task
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
-          FLUD_THREAD_ID: ${{ secrets.FLUD_THREAD_ID }} # Добавляем новую
-          ORGS_CHAT_ID: ${{ secrets.ORGS_CHAT_ID }}
-          NRMS_USERNAME: ${{ secrets.NRMS_USERNAME }}
-          NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
-          SHEET_BASE_URL: ${{ secrets.SHEET_BASE_URL }}
-          SHEET_FORM_URL: ${{ secrets.SHEET_FORM_URL }}
-          SHEET_BIRTHDAYS_URL: ${{ secrets.SHEET_BIRTHDAYS_URL }}
-          VK_TOKEN: ${{ secrets.VK_TOKEN }}
-          THREAD_ID: ${{ secrets.THREAD_ID }}
-        run: |
-          # 1. Проверка расписания
-          if [[ "${{ github.event.schedule }}" == "0 5 * * 6" ]]; then
-            python bot.py --weather
-          elif [[ "${{ github.event.schedule }}" == "*/20 7-10 * * 6" ]]; then
-            python bot.py --results
-          elif [[ "${{ github.event.schedule }}" == "0 11 * * 6" ]]; then
-            python bot.py --titles
-          elif [[ "${{ github.event.schedule }}" == "5 6 * * *" ]]; then
-            python bot.py --birthdays-auto
-          elif [[ "${{ github.event.schedule }}" == "0 */6 * * *" ]]; then
-            python bot.py --vk-check
-          elif [[ "${{ github.event.schedule }}" == "0 15 * * 5" ]]; then
-            python bot.py --vk-update && python bot.py --titles
-          elif [[ "${{ github.event.schedule }}" == "0 18 * * 0" ]]; then
-            python bot.py --stats
+#       - name: Run Task
+#         env:
+#           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+#           TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
+#           FLUD_THREAD_ID: ${{ secrets.FLUD_THREAD_ID }} # Добавляем новую
+#           ORGS_CHAT_ID: ${{ secrets.ORGS_CHAT_ID }}
+#           NRMS_USERNAME: ${{ secrets.NRMS_USERNAME }}
+#           NRMS_PASSWORD: ${{ secrets.NRMS_PASSWORD }}
+#           SHEET_BASE_URL: ${{ secrets.SHEET_BASE_URL }}
+#           SHEET_FORM_URL: ${{ secrets.SHEET_FORM_URL }}
+#           SHEET_BIRTHDAYS_URL: ${{ secrets.SHEET_BIRTHDAYS_URL }}
+#           VK_TOKEN: ${{ secrets.VK_TOKEN }}
+#           THREAD_ID: ${{ secrets.THREAD_ID }}
+#         run: |
+#           # 1. Проверка расписания
+#           if [[ "${{ github.event.schedule }}" == "0 5 * * 6" ]]; then
+#             python bot.py --weather
+#           elif [[ "${{ github.event.schedule }}" == "*/20 7-10 * * 6" ]]; then
+#             python bot.py --results
+#           elif [[ "${{ github.event.schedule }}" == "0 11 * * 6" ]]; then
+#             python bot.py --titles
+#           elif [[ "${{ github.event.schedule }}" == "5 6 * * *" ]]; then
+#             python bot.py --birthdays-auto
+#           elif [[ "${{ github.event.schedule }}" == "0 */6 * * *" ]]; then
+#             python bot.py --vk-check
+#           elif [[ "${{ github.event.schedule }}" == "0 15 * * 5" ]]; then
+#             python bot.py --vk-update && python bot.py --titles
+#           elif [[ "${{ github.event.schedule }}" == "0 18 * * 0" ]]; then
+#             python bot.py --stats
           
-          # 2. Обработка ручного выбора (workflow_dispatch)
-          elif [[ "${{ github.event.inputs.action }}" == "titles" ]]; then
-            python bot.py --titles
-          elif [[ "${{ github.event.inputs.action }}" == "results" ]]; then
-            python bot.py --results
-          elif [[ "${{ github.event.inputs.action }}" == "weather" ]]; then
-            python bot.py --weather
-          elif [[ "${{ github.event.inputs.action }}" == "send_button" ]]; then
-            python bot.py --send-button
-          elif [[ "${{ github.event.inputs.action }}" == "vk_check" ]]; then
-            python bot.py --vk-check
+#           # 2. Обработка ручного выбора (workflow_dispatch)
+#           elif [[ "${{ github.event.inputs.action }}" == "titles" ]]; then
+#             python bot.py --titles
+#           elif [[ "${{ github.event.inputs.action }}" == "results" ]]; then
+#             python bot.py --results
+#           elif [[ "${{ github.event.inputs.action }}" == "weather" ]]; then
+#             python bot.py --weather
+#           elif [[ "${{ github.event.inputs.action }}" == "send_button" ]]; then
+#             python bot.py --send-button
+#           elif [[ "${{ github.event.inputs.action }}" == "vk_check" ]]; then
+#             python bot.py --vk-check
           
-          # 3. Дефолтный ручной запуск (если ничего не выбрано)
-          else
-            python bot.py --results
-            python bot.py --titles
-          fi
+#           # 3. Дефолтный ручной запуск (если ничего не выбрано)
+#           else
+#             python bot.py --results
+#             python bot.py --titles
+#           fi
 
-      - name: Save Changes to Repo
-        run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "actions@github.com"
-          # Добавляем кэш, чтобы привязки ID сохранялись в репозитории
-          git add 5verst_cache.json last_report.txt vk_members.json || echo "No files"
-          git commit -m "Auto-update logs and cache" || echo "No changes"
-          git push || echo "Nothing to push"
+#       - name: Save Changes to Repo
+#         run: |
+#           git config --global user.name "GitHub Actions Bot"
+#           git config --global user.email "actions@github.com"
+#           # Добавляем кэш, чтобы привязки ID сохранялись в репозитории
+#           git add 5verst_cache.json last_report.txt vk_members.json || echo "No files"
+#           git commit -m "Auto-update logs and cache" || echo "No changes"
+#           git push || echo "Nothing to push"
